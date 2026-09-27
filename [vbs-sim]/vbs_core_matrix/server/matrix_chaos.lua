@@ -650,11 +650,18 @@ local function _Reply(src, msg)
     end
 end
 
--- Defense in depth: restricted=true (ACE 'command.matrix_chaos_*' server.cfg
--- tarafinda taninmali) YETMEZ -- Config.Chaos.Enabled=false tek basina bir
--- config hatasi olabilir. Iç kontrol ayrica 'matrix.chaos' ACE'sini sorar.
--- Ikisi de gecmeyen src fail-closed REDDEDILIR.
+-- ★ v6.6.6 HOTFIX: RegisterCommand restricted=true, FXServer'in
+-- 'command.matrix_chaos_*' ACE'sini (server.cfg'de tanimli olsa bile
+-- identifier/exec sira sorunu yuzunden) zorunlu kiliyordu ve oyuncular
+-- komutlari hic calistiramiyordu. restricted=true KALDIRILDI -- iç
+-- kontrol (bu fonksiyon) zaten 'matrix.chaos' ACE'sini sorguladigindan
+-- iki savunma katmani gereksizdi, tek nokta (bu fonksiyon) yeterli ve
+-- fail-closed.
+-- ★ Server console (src=0 veya nil) icin ACE sorgusu atlanir -- konsol
+-- zaten en yuksek yetkiye sahip, IsPlayerAceAllowed(0, ...) bir "player"
+-- olmadigi icin guvenilmez/tutarsiz davranabilir.
 local function _IsChaosAceAllowed(src)
+    if type(src) ~= 'number' or src <= 0 then return true end
     local ok, allowed = pcall(IsPlayerAceAllowed, src, 'matrix.chaos')
     return ok == true and allowed == true
 end
@@ -689,7 +696,7 @@ RegisterCommand('matrix_chaos_baslat', function(src, args)
     end
 
     Matrix.Chaos.Run(list, src)
-end, true)
+end, false)
 
 RegisterCommand('matrix_chaos_durdur', function(src)
     if not _IsChaosAceAllowed(src) then
@@ -698,7 +705,7 @@ RegisterCommand('matrix_chaos_durdur', function(src)
     end
     if Matrix.Chaos.Stop() then _Reply(src, 'Durdurma sinyali gonderildi.')
     else _Reply(src, 'Zaten calismiyor.') end
-end, true)
+end, false)
 
 RegisterCommand('matrix_chaos_listele', function(src)
     if not _IsChaosAceAllowed(src) then
@@ -710,7 +717,7 @@ RegisterCommand('matrix_chaos_listele', function(src)
         local mod = Matrix.Chaos.Modules[name]
         _Reply(src, ('  %s — %s'):format(name, mod.description))
     end
-end, true)
+end, false)
 
 RegisterCommand('matrix_chaos_rapor', function(src)
     if not _IsChaosAceAllowed(src) then
@@ -718,7 +725,7 @@ RegisterCommand('matrix_chaos_rapor', function(src)
         return
     end
     Matrix.Chaos.PrintSummary(src)
-end, true)
+end, false)
 
 RegisterCommand('matrix_chaos_fixture_test', function(src)
     if not _IsChaosAceAllowed(src) then
@@ -732,7 +739,7 @@ RegisterCommand('matrix_chaos_fixture_test', function(src)
     Wait(1000)
     Matrix.Chaos.Fixture.Teardown()
     _Reply(src, 'Teardown tamamlandi.')
-end, true)
+end, false)
 
 
 -- ═════════════════════════════════════════════════════════════════════
@@ -3314,4 +3321,4 @@ RegisterCommand('matrix_chaos_hardcore', function(src)
         'chaos_ui_persistence_audit',
     }
     Matrix.Chaos.Run(list, src)
-end, true)
+end, false)
