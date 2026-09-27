@@ -253,7 +253,7 @@ function Matrix.Positions.AssignBot(trapHouseId, slotIndex, botId, citizenid)
     slot.assigned_at = os.date('%Y-%m-%d %H:%M:%S')
 
     -- ★ [FIX] DB callback — sessiz fail'i engelle
-    MySQL.prepare([[
+    MySQL.update([[
         UPDATE matrix_positions
         SET assigned_bot_id = ?, assigned_citizenid = ?, assigned_at = NOW()
         WHERE id = ?
@@ -287,7 +287,7 @@ function Matrix.Positions.ReleaseSlot(trapHouseId, slotIndex)
     slot.using_backup = 0
 
     -- ★ [FIX] DB callback
-    MySQL.prepare([[
+    MySQL.update([[
         UPDATE matrix_positions
         SET assigned_bot_id = NULL, assigned_citizenid = NULL,
             assigned_at = NULL, under_fire = 0, using_backup = 0
@@ -362,7 +362,7 @@ function Matrix.Positions.MarkUnderFire(trapHouseId, slotIndex)
     slot.using_backup = 1
 
     -- ★ [FIX] DB callback
-    MySQL.prepare([[
+    MySQL.update([[
         UPDATE matrix_positions
         SET under_fire = 1, last_fire_at = NOW(), using_backup = 1
         WHERE id = ?
@@ -393,7 +393,7 @@ CreateThread(function()
                         slot.using_backup = 0
 
                         -- ★ [FIX] DB callback
-                        MySQL.prepare([[
+                        MySQL.update([[
                             UPDATE matrix_positions
                             SET under_fire = 0, using_backup = 0
                             WHERE id = ?

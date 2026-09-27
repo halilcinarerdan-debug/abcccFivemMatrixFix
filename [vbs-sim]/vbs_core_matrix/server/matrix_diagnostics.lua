@@ -4912,9 +4912,8 @@ AddCheck('[POSITIONS] Reflex state gecisi (under_fire -> using_backup)', functio
             return false, 'slot 1 temiz degil — fixture seed sonrasi beklenmeyen durum'
         end
 
-        -- MarkUnderFire çağır
+        -- MarkUnderFire çağır (RAM senkron güncellenir, Wait gerekmez)
         Matrix.Positions.MarkUnderFire(trapId, 1)
-        Wait(100)
 
         local sAfter = Matrix.Positions.GetSlot(trapId, 1)
         if sAfter.under_fire ~= 1 then
@@ -4928,7 +4927,6 @@ AddCheck('[POSITIONS] Reflex state gecisi (under_fire -> using_backup)', functio
         local slot7 = Matrix.Positions.GetSlot(trapId, 7)
         if slot7 then
             Matrix.Positions.MarkUnderFire(trapId, 7)
-            Wait(100)
             local s7 = Matrix.Positions.GetSlot(trapId, 7)
             if s7.under_fire ~= 1 then
                 return false, 'slot 7 under_fire=1 olmadi'
@@ -4957,7 +4955,6 @@ AddCheck('[POSITIONS] SQL guvenli payload (slot_type + citizenid)', function()
         for _, cid in ipairs(payloads) do
             -- Önce slotu temizle
             pcall(Matrix.Positions.ReleaseSlot, trapId, 6)
-            Wait(50)
             local ok, err = pcall(Matrix.Positions.AssignBot, trapId, 6, nil, cid)
             if not ok then
                 return false, ('AssignBot payload hata firlatti: %s'):format(tostring(err))
