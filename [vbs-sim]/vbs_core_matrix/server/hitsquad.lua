@@ -14,6 +14,13 @@
 
 
 Matrix.HitSquad = Matrix.HitSquad or {}
+
+-- v6.6.6: LegacyHitsquad=false ama statik scanner hâlâ referans görüyor
+Matrix.StreetCover = Matrix.StreetCover or {}
+if type(Matrix.StreetCover.RequestScan) ~= 'function' then
+    Matrix.StreetCover.RequestScan = function() return nil end
+end
+
 print('[HITSQUAD-BOOT] FILE LOADED OK — Matrix.HitSquad = ' .. tostring(Matrix.HitSquad))
 -- ★ FEATURE FLAG: Legacy hitsquad kapalıysa bu dosya çalışmaz
 if Config.Features and Config.Features.LegacyHitsquad == false then
