@@ -1727,7 +1727,24 @@ end)
 local bureauAccumulator = 0
 
 CreateThread(function()
-    LoadBotsFromDatabase()
+    -- v6.6.6 H6: LoadBotsFromDatabase pcall'siz cagriliyordu -- basarisiz
+    -- olursa (DB henuz hazir degil, malformed row, vb.) bu thread hic
+    -- ilerlemez ve asagidaki while true do tick dongusu HIC BASLAMAZDI
+    -- (tum simulasyon olurdu). Simdi pcall + max 3 deneme; hepsi
+    -- basarisiz olursa RAM bos (Matrix.Bots bos tablo) ile devam edilir.
+    local loaded = false
+    for attempt = 1, 3 do
+        local ok, err = pcall(LoadBotsFromDatabase)
+        if ok then
+            loaded = true
+            break
+        end
+        Matrix.Log('CORE', '[HATA][KRITIK] LoadBotsFromDatabase deneme %d/3 basarisiz: %s', attempt, tostring(err))
+        if attempt < 3 then Wait(1000) end
+    end
+    if not loaded then
+        Matrix.Log('CORE', '[HATA][KRITIK] LoadBotsFromDatabase 3 denemede de basarisiz -- RAM bos baslatildi, tick dongusu DEVAM EDIYOR.')
+    end
 
     local interval       = Config.Tick.IntervalMs
     local secPerMin      = Config.Tick.SecondsPerMinute

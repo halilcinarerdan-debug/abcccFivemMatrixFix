@@ -531,9 +531,55 @@ end)
 -- =====================================================================
 -- [KATMAN 2] OYUNCU-HASAR KANCA
 -- =====================================================================
+-- v6.6.6 B14 (v6.6.5 [KOR NOKTA 1.1]'in bulgusu): Matrix.Wounds.
+-- ValidateWoundReport hic tanimli degildi -- bu dosyadaki yorum (asagida,
+-- player_telemetry.lua'da da tekrarlanir) bu event'in zero-trust
+-- korumasinin ZATEN burada uygulandigini soyluyordu ama attackerServerId/
+-- attackerWeaponHash client'tan HICBIR dogrulama olmadan kabul
+-- ediliyordu (sahte saldirgan atfi / sahte yaralanma mumkundu).
+-- Zero-trust: attacker belirtilmisse (a) kendi kendine olamaz, (b)
+-- GERCEKTEN baglantili bir oyuncu olmali, (c) o oyuncunun ZATEN VAR OLAN
+-- LastFiredWeaponSerial takibinde YAKINDA bu silahi atesledigi
+-- kayitli olmali.
+function Matrix.Wounds.ValidateWoundReport(src, attackerServerId, attackerWeaponHash)
+    if type(src) ~= 'number' or src <= 0 then return false end
+
+    attackerServerId = tonumber(attackerServerId)
+
+    -- Attacker belirtilmemis (NPC/cevre kaynakli hasar) -- sadece
+    -- weapon hash string olmali.
+    if not attackerServerId or attackerServerId <= 0 then
+        return type(attackerWeaponHash) == 'string' and attackerWeaponHash ~= ''
+    end
+
+    if attackerServerId == src then
+        Matrix.Log('WOUNDS', '[YETKI RED] ValidateWoundReport: src=%d kendini attacker olarak bildirdi.', src)
+        return false
+    end
+
+    local ok, attackerState = pcall(Matrix.GetOrCreatePlayerState, attackerServerId)
+    if not ok or not attackerState or not attackerState.citizenid then
+        Matrix.Log('WOUNDS', '[YETKI RED] ValidateWoundReport: src=%d gecersiz attackerServerId=%s bildirdi.',
+            src, tostring(attackerServerId))
+        return false
+    end
+
+    if not LastFiredWeaponSerial[attackerServerId] then
+        Matrix.Log('WOUNDS', '[YETKI RED] ValidateWoundReport: src=%d attacker=%d icin eslesen ates kaydi yok.',
+            src, attackerServerId)
+        return false
+    end
+
+    return true
+end
+
 RegisterNetEvent('matrix:server:reportPlayerWounded', function(attackerServerId, attackerWeaponHash)
     local src = source
     if type(src) ~= 'number' or src <= 0 then return end
+
+    if not Matrix.Wounds.ValidateWoundReport(src, attackerServerId, attackerWeaponHash) then
+        return
+    end
 
     local state = Matrix.GetOrCreatePlayerState(src)
     if not state or not state.citizenid then return end

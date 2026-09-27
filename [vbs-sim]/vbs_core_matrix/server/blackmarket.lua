@@ -468,10 +468,14 @@ local function DeliverViaRendezvousOrFallback(src, citizenid, catalogType, entry
     end
 
 
-    local addOk = pcall(function()
+    -- v6.6.6 H9: pcall'in kendi basari bayragi (hata firlatilmadi) ile
+    -- AddItem'in GERCEK donus degerini (envantere sigdi mi) KARISTIRMA --
+    -- ikisi de true olmali, aksi halde para alinip esya hic teslim
+    -- edilmeden "basarili" sayilirdi (yanlis-pozitif).
+    local addOk, addResult = pcall(function()
         return exports['ox_inventory']:AddItem(src, itemName, itemCount or 1, metadata)
     end)
-    if not addOk then return false, 'inventory_full' end
+    if not addOk or not addResult then return false, 'inventory_full' end
     return true, 'direct'
 end
 
@@ -643,10 +647,12 @@ RegisterNetEvent('matrix:server:blackmarket:buySpareBarrel', function(token)
         end
 
 
-        local addOk = pcall(function()
+        -- v6.6.6 H9: pcall'in kendi basari bayragi ile AddItem'in GERCEK
+        -- donus degerini KARISTIRMA -- ikisi de true olmali.
+        local addOk, addResult = pcall(function()
             return exports['ox_inventory']:AddItem(src, item, 1)
         end)
-        if not addOk then
+        if not addOk or not addResult then
             RefundCash(src, price, citizenid)
             Reply(src, 'Yedek Namlu teslim edilemedi, odeme iade edildi (envanter dolu olabilir).')
             TriggerClientEvent('matrix:client:blackmarket:purchaseResult', src, false, Config.BlackMarket.SpareBarrelLabel, nil)
@@ -706,10 +712,12 @@ RegisterNetEvent('matrix:server:blackmarket:buyBurnerPhone', function(catalogId,
         -- Ust Arama kontrabant kontrolunun (Config.Forensics.Frisk.
         -- BurnerPhoneMaxHoldSeconds) tek girdisidir -- bu satirin DISINDA hicbir
         -- sey (satis fiyati/IMEI maskeleme) DEGISTIRILMEDI.
-        local addOk = pcall(function()
+        -- v6.6.6 H9: pcall'in kendi basari bayragi ile AddItem'in GERCEK
+        -- donus degerini KARISTIRMA -- ikisi de true olmali.
+        local addOk, addResult = pcall(function()
             return exports['ox_inventory']:AddItem(src, entry.item, 1, { imei_masked = true, acquired_at = Matrix.Now() })
         end)
-        if not addOk then
+        if not addOk or not addResult then
             RefundCash(src, entry.price, citizenid)
             Reply(src, 'Acik Hat teslim edilemedi, odeme iade edildi (envanter dolu olabilir).')
             TriggerClientEvent('matrix:client:blackmarket:purchaseResult', src, false, entry.label, nil)

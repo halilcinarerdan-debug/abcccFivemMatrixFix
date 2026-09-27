@@ -777,6 +777,31 @@ function Matrix.Cognition.GenerateSpecialtyFromDna(dnaId)
     }
 end
 
+-- v6.6.6 B13 (v6.6.5 [KOR NOKTA 1.1]'in bulgusu): recruitment.lua
+-- Matrix.Cognition.DeriveCoercedPsychology'i cagiriyordu ama bu fonksiyon
+-- hic tanimli degildi (guard'lanmis oldugu icin sessizce kendi
+-- deterministik fallback'ine dusuyordu). Burada AYNI GeneratePersonalityFromDna
+-- desenini (0 RNG, _DeriveFloat hash-tabanli) kullanan gercek bir
+-- implementasyon tanimlanir -- baski (coercion) altinda devsirilen
+-- ajanlar dogal recruitment'a gore daha korkak/daha ihbarci baslar;
+-- addiction_level bu egilimi guclendirir.
+function Matrix.Cognition.DeriveCoercedPsychology(data)
+    if type(data) ~= 'table' then return nil end
+    local seed = (type(data.dna_id) == 'string' and data.dna_id ~= '' and data.dna_id)
+        or (type(data.citizenid) == 'string' and data.citizenid ~= '' and data.citizenid)
+        or 'UNKNOWN-COERCED'
+    local addictionFrac = Matrix.Clamp(tonumber(data.addiction_level) or 0.0, 0.0, 100.0) / 100.0
+
+    return {
+        fear_factor       = Matrix.Clamp(0.40 + _DeriveFloat(seed, 'coerced_fear') * 0.30 + addictionFrac * 0.20, 0.0, 1.0),
+        resilience        = Matrix.Clamp(0.70 * _DeriveFloat(seed, 'coerced_resilience'), 0.0, 1.0),
+        snitch_tendency   = Matrix.Clamp(0.10 + _DeriveFloat(seed, 'coerced_snitch') * 0.35, 0.0, 1.0),
+        economic_pressure = Matrix.Clamp(0.20 + _DeriveFloat(seed, 'coerced_economic') * 0.55 + addictionFrac * 0.25, 0.0, 1.0),
+        cognitive_shifter = Matrix.Clamp(0.30 + _DeriveFloat(seed, 'coerced_shifter') * 0.20, 0.0, 1.0),
+        skill_chemistry   = Matrix.Clamp(0.15 + _DeriveFloat(seed, 'coerced_chemistry') * 0.10, 0.0, 1.0)
+    }
+end
+
 -- Not: sha256_hex ve string_sub, dosyanın en başında tanımlı (Section 1).
 
 -- =====================================================================

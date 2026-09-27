@@ -250,17 +250,15 @@ local function AbortCoercion(coercionId, reason, src)
 
     local cfg = CoercionCfg()
 
-    -- Proximity abort -> cyber_leak_intensity spike + hedef freeze
+    -- Proximity abort -> hedef freeze
+    -- v6.6.6 B12 (v6.6.5 [KOR NOKTA 1.1]'in bulgusu): Matrix.CyberLeak
+    -- modulu hic olusturulmamisti VE _G.MatrixSpikeCyberLeak fallback'i
+    -- de hic tanimli degildi -- cyber_leak_intensity spike mekanigi HER
+    -- ZAMAN sessiz bir no-op'tu. Iki dal da kaldirildi (kaldir secenegi).
+    -- Duzgun bir implementasyon (Matrix.Bureau.SetHeat ile hangi trap
+    -- house'un spikelenecegini bulmak) coercion kaydinin bir trapHouseId
+    -- tasimasini gerektirir -- kapsam disi, v6.6.7'ye not dusuldu.
     if reason == 'proximity' or reason == 'cancelled' then
-        if Matrix.CyberLeak and Matrix.CyberLeak.Spike then
-            Matrix.CyberLeak.Spike(cfg.CyberLeakSpikeOnAbort, 'coercion_abort')
-        else
-            -- Fallback: expose spike via known global if core exposes it
-            if type(_G.MatrixSpikeCyberLeak) == 'function' then
-                _G.MatrixSpikeCyberLeak(cfg.CyberLeakSpikeOnAbort)
-            end
-        end
-
         -- Hedefi freeze et
         if c.target_net_id then
             TriggerClientEvent('matrix:client:freezeEntity', -1, c.target_net_id, cfg.FreezeDurationMs)

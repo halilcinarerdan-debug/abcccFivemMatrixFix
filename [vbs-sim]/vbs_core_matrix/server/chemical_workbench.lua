@@ -50,6 +50,12 @@ local GetPlayerRoutingBucket        = GetPlayerRoutingBucket
 Matrix.ChemicalWorkbench.WorkbenchBot       = {}
 Matrix.ChemicalWorkbench.RaidEscalationScore = {}
 
+-- v6.6.6 H10: senkron mutex -- ProcessSynthesis icinde MySQL.await
+-- (yield) noktasi var; bu kilit olmadan iki eszamanli submitSynthesis
+-- cagrisi ayni workbench/bot'u paylasip double-spend race'e girebilirdi.
+-- Kontrol+set HERHANGI bir yield'den ONCE (senkron) yapilir.
+local WorkbenchBusy = {} -- [trapHouseId] = true
+
 local function Reply(src, msg)
     if type(src) == 'number' and src > 0 then
         TriggerClientEvent('chat:addMessage', src, { args = { '[LAB]', msg } })
@@ -482,8 +488,23 @@ RegisterNetEvent('matrix:server:chemicalWorkbench:submitSynthesis', function(tra
         end
     end
 
-    local ok, reason = Matrix.ChemicalWorkbench.ProcessSynthesis(
+    if WorkbenchBusy[trapHouseId] then
+        TriggerClientEvent('matrix:client:actionNotify', src, false,
+            '[SYNTHESIS] Workbench is currently in use.')
+        return
+    end
+    WorkbenchBusy[trapHouseId] = true
+
+    local callOk, ok, reason = pcall(Matrix.ChemicalWorkbench.ProcessSynthesis,
         src, botId, trapHouseId, pureMg, cuttingMg)
+
+    WorkbenchBusy[trapHouseId] = nil
+
+    if not callOk then
+        Matrix.Log('CHEMWB', '[HATA] ProcessSynthesis hata firlatti (yutuldu, kilit serbest birakildi): %s', tostring(ok))
+        TriggerClientEvent('matrix:client:actionNotify', src, false, '[SYNTHESIS] Internal error.')
+        return
+    end
 
     if not ok then
         local msg = ({

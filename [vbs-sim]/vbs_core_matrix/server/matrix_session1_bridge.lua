@@ -326,6 +326,10 @@ end
 -- =====================================================================
 -- [E] ANTI-EXPLOIT QUANTUM ENFORCEMENT
 -- =====================================================================
+-- v6.6.6 H21: purchaseCell per-citizenid kilit -- blackmarket.lua
+-- TryAcquirePurchaseLock ile AYNI desen.
+local PurchaseCellLock = {} -- [citizenid] = true
+
 local function CountActiveCellsForCitizen(citizenid)
     local n = 0
     for _, proxyId in ipairs(CitizenIndex[citizenid] or {}) do
@@ -440,6 +444,22 @@ RegisterNetEvent('matrix:server:proxy:purchaseCell', function(size, coordsPayloa
         return
     end
 
+    -- v6.6.6 H21: purchaseCell TOCTOU race -- active<maxLimit kontrolu ile
+    -- gercek INSERT arasinda cok satir/await var; ardisik/eszamanli
+    -- cagrilar ayni bayat 'active' degerini gecip maxLimit'i asabilirdi.
+    -- Kilit: bu citizenid icin ayni anda sadece TEK bir purchaseCell
+    -- calisir (blackmarket.lua TryAcquirePurchaseLock ile AYNI desen);
+    -- govde pcall'a alinir ki hangi yoldan cikilirsa cikilsin kilit HER
+    -- ZAMAN serbest birakilsin.
+    if PurchaseCellLock[citizenid] then
+        TriggerClientEvent('matrix:client:actionNotify', src, false,
+            'Bir onceki proxy kaydi hala isleniyor, bekle.')
+        return
+    end
+    PurchaseCellLock[citizenid] = true
+
+    local lockOk, lockErr = pcall(function()
+
     if not CitizenIndex[citizenid] then HydrateCacheForCitizen(citizenid) end
     local active = CountActiveCellsForCitizen(citizenid)
 
@@ -512,6 +532,19 @@ RegisterNetEvent('matrix:server:proxy:purchaseCell', function(size, coordsPayloa
     if not chargeOk or chargeRes ~= true then
         TriggerClientEvent('matrix:client:actionNotify', src, false,
             'Security handshake failed. Line disconnected.')
+        return
+    end
+
+    -- v6.6.6 H21: transaction sonu re-check -- para alindiktan sonra,
+    -- gercek kayit INSERT'inden ONCE limit tekrar dogrulanir (bayat
+    -- 'active' anlik snapshot'iydi).
+    local recheckActive = CountActiveCellsForCitizen(citizenid)
+    if recheckActive >= maxLimit then
+        pcall(function() player.Functions.AddMoney('bank', variant.cost, 'session1-proxy-refund') end)
+        TriggerClientEvent('matrix:client:actionNotify', src, false,
+            'Cell operational limit reached. Retainment fund refunded.')
+        Matrix.Log('SESSION1', '[YETKI RED] purchaseCell: %s icin re-check limiti asti (active=%d, max=%d).',
+            citizenid, recheckActive, maxLimit)
         return
     end
 
@@ -594,6 +627,12 @@ RegisterNetEvent('matrix:server:proxy:purchaseCell', function(size, coordsPayloa
     Matrix.Log('SESSION1',
         '[PURCHASE] %s -> proxy #%d (size=%s, cost=$%d)',
         citizenid, insertId, size, variant.cost)
+
+    end)
+    PurchaseCellLock[citizenid] = nil
+    if not lockOk then
+        Matrix.Log('SESSION1', '[HATA] purchaseCell ic hata (kilit serbest birakildi): %s', tostring(lockErr))
+    end
 end)
 
 -- =====================================================================

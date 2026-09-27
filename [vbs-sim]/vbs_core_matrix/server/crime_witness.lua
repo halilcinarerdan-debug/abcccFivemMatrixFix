@@ -492,6 +492,44 @@ RegisterNetEvent('matrix:server:reportKill', function(victimNetId, attackerNetId
         end
     end
 
+    -- v6.6.6 H22: akla yatkinlik kontrolu -- oncesinde client HERHANGI
+    -- iki netId'yi (uzak, ilgisiz) bildirebilir ve sahte bir taniklik/
+    -- suc zinciri baslatabilirdi (sahte tanik). Sunucu artik: (a) bildiren
+    -- src'nin KENDI ped'i olayi fiilen GOREBILECEK mesafede/LOS icinde
+    -- olmali, (b) attacker belirtilmisse victim'e fiziksel olarak makul
+    -- bir mesafede olmali.
+    local reporterPed = GetPlayerPed(src)
+    if not reporterPed or reporterPed == 0 or not DoesEntityExist(reporterPed) then return end
+
+    local okRC, reporterCoords = pcall(GetEntityCoords, reporterPed)
+    local okVC, victimCoords   = pcall(GetEntityCoords, victimPed)
+    if not okRC or not okVC then return end
+
+    local reporterDist = #(reporterCoords - victimCoords)
+    if reporterDist > Matrix.CrimeWitness.WITNESS_RADIUS then
+        Matrix.Log('CRIME', '[YETKI RED] reportKill: src=%d mesafe disi (%.1fm > %.1fm).',
+            src, reporterDist, Matrix.CrimeWitness.WITNESS_RADIUS)
+        return
+    end
+
+    local okLOS, hasLOS = pcall(HasEntityClearLosToEntity, reporterPed, victimPed, 17)
+    if not okLOS or not hasLOS then
+        Matrix.Log('CRIME', '[YETKI RED] reportKill: src=%d victim ile LOS yok.', src)
+        return
+    end
+
+    if attackerPed ~= 0 then
+        local okAC, attackerCoords = pcall(GetEntityCoords, attackerPed)
+        if not okAC then return end
+        local attackerToVictimDist = #(attackerCoords - victimCoords)
+        if attackerToVictimDist > Matrix.CrimeWitness.WITNESS_RADIUS then
+            Matrix.Log('CRIME',
+                '[YETKI RED] reportKill: src=%d attacker-victim mesafesi fiziksel olarak imkansiz (%.1fm).',
+                src, attackerToVictimDist)
+            return
+        end
+    end
+
     Matrix.CrimeWitness.__HandleDamage(victimPed, attackerPed, true, victimDied == true)
 end)
 

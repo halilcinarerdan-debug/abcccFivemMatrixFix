@@ -202,9 +202,24 @@ local function EnsureSchemaAndLoad()
     pcall(function()
         MySQL.query.await([[ALTER TABLE matrix_trap_houses ADD COLUMN IF NOT EXISTS active_workbench_weapon_serial VARCHAR(64) NULL;]])
     end)
+    -- v6.6.6 H11: weaponName ve owner citizenid ARTIK kalici -- oncesinde
+    -- sadece weaponSerial DB'ye yaziliyordu, weaponName restart'ta
+    -- HARDCODED nil'e dusuyordu (CompleteBlunder/Success bu durumda
+    -- 'weapon_combatpistol' TAHMINI kullaniyordu -- yanlis silah turu
+    -- geri donebilirdi) ve hicbir zaman bir sahip citizenid'i
+    -- kaydedilmiyordu (halted workbench'teki silah asla sahibine
+    -- iade edilemezdi).
+    pcall(function()
+        MySQL.query.await([[ALTER TABLE matrix_trap_houses ADD COLUMN IF NOT EXISTS active_workbench_weapon_name VARCHAR(64) NULL;]])
+    end)
+    pcall(function()
+        MySQL.query.await([[ALTER TABLE matrix_trap_houses ADD COLUMN IF NOT EXISTS active_workbench_owner_citizenid VARCHAR(64) NULL;]])
+    end)
 
     local callOk = pcall(function()
-        MySQL.query('SELECT id, workbench_bot_id, workbench_status, active_workbench_weapon_serial FROM matrix_trap_houses',
+        MySQL.query([[SELECT id, workbench_bot_id, workbench_status, active_workbench_weapon_serial,
+                             active_workbench_weapon_name, active_workbench_owner_citizenid
+                      FROM matrix_trap_houses]],
         {}, function(rows)
             pcall(function()
                 if type(rows) ~= 'table' then return end
@@ -212,18 +227,22 @@ local function EnsureSchemaAndLoad()
                     local tid = tonumber(row.id)
                     if tid then
                         local status = row.workbench_status or 'idle'
-                        -- ★ RESTART GÜVENLİĞİ: 'working' iken metadata RAM'deydi;
-                        -- restart sonrası kurtarılamaz. Halt'a çek.
+                        -- ★ RESTART GÜVENLİĞİ: 'working' iken bot-cycle
+                        -- ilerlemesi (tickCount) RAM'deydi; restart sonrası
+                        -- kurtarılamaz. Halt'a çek. weaponSerial/weaponName/
+                        -- owner ARTIK kalici oldugu icin silah kimligi
+                        -- KAYBOLMAZ -- sadece isleme ilerlemesi sifirlanir.
                         if status == 'working' then
                             status = 'halted_no_materials'
                             WorkbenchDirty[tid] = true
                         end
                         WorkbenchRuntime[tid] = {
-                            botId        = tonumber(row.workbench_bot_id),
-                            status       = status,
-                            weaponSerial = row.active_workbench_weapon_serial,
-                            weaponName   = nil,
-                            tickCount    = 0,
+                            botId          = tonumber(row.workbench_bot_id),
+                            status         = status,
+                            weaponSerial   = row.active_workbench_weapon_serial,
+                            weaponName     = row.active_workbench_weapon_name,
+                            ownerCitizenid = row.active_workbench_owner_citizenid,
+                            tickCount      = 0,
                         }
                     end
                 end
@@ -261,10 +280,12 @@ local function FlushWorkbenchDirty()
                     UPDATE matrix_trap_houses
                     SET workbench_bot_id = ?,
                         workbench_status = ?,
-                        active_workbench_weapon_serial = ?
+                        active_workbench_weapon_serial = ?,
+                        active_workbench_weapon_name = ?,
+                        active_workbench_owner_citizenid = ?
                     WHERE id = ?
                 ]],
-                values = { rt.botId, rt.status, rt.weaponSerial, tid }
+                values = { rt.botId, rt.status, rt.weaponSerial, rt.weaponName, rt.ownerCitizenid, tid }
             }
         end
     end
@@ -452,12 +473,17 @@ RegisterCommand('tezgahabotata', function(src, args)
     end
 
     -- Trap house workbench kaydına kilitle.
+    -- v6.6.6 H11: ownerCitizenid ARTIK kaydediliyor -- boylece workbench
+    -- restart sonrasi halted kalsa da silah HANGI oyuncuya ait oldugu
+    -- biliniyor (once bu hic tutulmuyordu).
+    local ownerState = Matrix.GetOrCreatePlayerState(src)
     local rt = WorkbenchRuntime[trapHouseId] or {}
-    rt.botId        = botId
-    rt.status       = 'working'
-    rt.weaponSerial = weaponSerial
-    rt.weaponName   = weaponItem.name
-    rt.tickCount    = 0
+    rt.botId          = botId
+    rt.status         = 'working'
+    rt.weaponSerial   = weaponSerial
+    rt.weaponName     = weaponItem.name
+    rt.ownerCitizenid = ownerState and ownerState.citizenid
+    rt.tickCount      = 0
     WorkbenchRuntime[trapHouseId] = rt
     WorkbenchDirty[trapHouseId]   = true
 
@@ -844,16 +870,17 @@ exports('TogglePackagingRoom', function(src, trapHouseId, forceState)
     return Matrix.Workbench.TogglePackagingRoom(src, trapHouseId, forceState)
 end)
 
-exports('DispatchWorkbenchBot', function(trapHouseId, botId, weaponSerial, weaponName)
+exports('DispatchWorkbenchBot', function(trapHouseId, botId, weaponSerial, weaponName, ownerCitizenid)
     -- Programatik dispatch (test/otomasyon için); komut ile aynı state'e yazar.
     trapHouseId = tonumber(trapHouseId); botId = tonumber(botId)
     if not trapHouseId or not botId then return false end
     local rt = WorkbenchRuntime[trapHouseId] or {}
-    rt.botId        = botId
-    rt.status       = 'working'
-    rt.weaponSerial = weaponSerial
-    rt.weaponName   = weaponName or 'weapon_combatpistol'
-    rt.tickCount    = 0
+    rt.botId          = botId
+    rt.status         = 'working'
+    rt.weaponSerial   = weaponSerial
+    rt.weaponName     = weaponName or 'weapon_combatpistol'
+    rt.ownerCitizenid = ownerCitizenid
+    rt.tickCount      = 0
     WorkbenchRuntime[trapHouseId] = rt
     WorkbenchDirty[trapHouseId]   = true
     local bot = Matrix.Bots and Matrix.Bots[botId]

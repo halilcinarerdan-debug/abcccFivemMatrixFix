@@ -1846,13 +1846,21 @@ end, false)
 
 
 RegisterCommand('gecodeme', function(src, args)
-    local citizenid = args[1]
-    local supplierId = tonumber(args[2])
-    if type(citizenid) ~= 'string' or not supplierId then
-        Reply(src, 'Kullanim: /gecodeme [citizenid] [supplierId]'); return
+    local supplierId = tonumber(args[1])
+    if not supplierId then
+        Reply(src, 'Kullanim: /gecodeme [supplierId]'); return
     end
 
-    local newTrust = Matrix.Supplier.ReportLatePayment(citizenid, supplierId)
+    -- v6.6.6 H14: citizenid artik komut argumanindan ALINMIYOR -- cagiran
+    -- BASKA birinin citizenid'ini yazip TriggerBetrayal -> executeHitSquad
+    -- zincirini rakibine yonlendirebiliyordu (yanlis hedef). Hedef HER
+    -- ZAMAN cagiranin KENDI citizenid'i olur.
+    local state = Matrix.GetOrCreatePlayerState(src)
+    if not state or not state.citizenid then
+        Reply(src, 'Oyuncu profili cozulemedi.'); return
+    end
+
+    local newTrust = Matrix.Supplier.ReportLatePayment(state.citizenid, supplierId)
     Reply(src, ('Gecikmis odeme islendi. Yeni guven:%.3f'):format(newTrust))
 end, false)
 

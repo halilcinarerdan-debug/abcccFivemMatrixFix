@@ -323,10 +323,11 @@ end
         pcall(function()
             MySQL.query.await('DELETE FROM matrix_banking_escrow WHERE trap_house_id = ?', { trapId })
         end)
-        -- RAM dirty cache'i de temizle
-        if Matrix.CashDecay and Matrix.CashDecay.__ClearDirtyForTrap then
-            pcall(Matrix.CashDecay.__ClearDirtyForTrap, trapId)
-        end
+        -- v6.6.6 B11 (v6.6.5 [KOR NOKTA 1.1]'in bulgusu): Matrix.CashDecay
+        -- modulu (market.lua) __ClearDirtyForTrap'i hic tanimlamamisti --
+        -- guard sayesinde zaten sessiz bir no-op'tu. Cagri kaldirildi
+        -- (kaldir secenegi). market.lua'ya bu sprint'te yazma iznim yok;
+        -- gercek RAM dirty-cache temizligi v6.6.7'ye not dusuldu.
 
         -- RAM'den sil
         if Matrix.TrapHouses then
@@ -3014,58 +3015,9 @@ Matrix.Chaos.RegisterModule('live_spoof',
 end)
 
 
-Matrix.Chaos.RegisterModule('sql_static_scan',
-    'MySQL.query cagrilarinda string birlestirme tara', function()
-
-    local A = Matrix.Chaos.Assert
-    A.SetContext('sql_static_scan', 'server/matrix_chaos.lua')
-
-    local files = {
-        'server/main.lua', 'server/bureau.lua', 'server/market.lua',
-        'server/logistics.lua', 'server/blackmarket.lua', 'server/wound_system.lua',
-        'server/crime_witness.lua', 'server/kitchen.lua', 'server/forensics.lua',
-    }
-
-    local offenders = {}
-
-    for _, path in ipairs(files) do
-        local content = LoadResourceFile(GetCurrentResourceName(), path)
-        if type(content) == 'string' then
-            local lineNum = 0
-            for line in content:gmatch('[^\n]*') do
-                lineNum = lineNum + 1
-                local codeOnly = line:match('^([^%-]*)') or ''
-
-                local hasSQLCall = codeOnly:find('MySQL%.%w+%.?%w*%s*%(')
-                    or codeOnly:find('MySQL%.%w+%s*%(')
-                local hasStringConcat = codeOnly:find('%.%.', 1, true)
-                local hasStringFormat = codeOnly:find('string%.format')
-
-                if hasSQLCall and (hasStringConcat or hasStringFormat) then
-                    offenders[#offenders + 1] = ('%s:%d'):format(path, lineNum)
-                end
-            end
-        end
-    end
-
-    if #offenders > 0 then
-        Matrix.Chaos.Report('HIGH', 'sql_static_scan: SQL string birlestirme bulundu', {
-            file   = offenders[1],
-            attack = ('%d dosya: SQL cagrisi + string birlestirme'):format(#offenders),
-            impact = ('Ornekler: %s'):format(table.concat(offenders, ', ')),
-            fix    = 'MySQL cagrilarinda parametre binding (?) kullan.',
-        })
-    else
-        print(('[CHAOS][sql_static_scan] OK: %d dosya temiz'):format(#files))
-    end
-
-    Matrix.Chaos.Report('INFO', 'sql_static_scan tamamlandi', {
-        attack = ('%d dosya static scan'):format(#files),
-        impact = string.format('%d bulgu', #Matrix.Chaos.Findings),
-    })
-end)
-
-
+-- v6.6.6 B2/H7: duplicate 'sql_static_scan' Matrix.Chaos.RegisterModule
+-- blogu (v5.0 kalintisi) buradan SILINDI -- birinci, daha detayli
+-- versiyon (bu dosyada yukarida) tek gecerli kayit olarak kaldi.
 
 -- =====================================================================
 -- [v6.6.5 A5 PAKET 3] KOR NOKTA CHAOS MODULLERI

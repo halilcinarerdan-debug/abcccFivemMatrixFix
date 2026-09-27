@@ -429,11 +429,26 @@ AddEventHandler('matrix:internal:mole_flagged', function(botId)
 end)
 
 
+-- v6.6.6 H15: transactAtCompromised'in hicbir cooldown'u yoktu -- spam ile
+-- audit_anomaly_rate ustel olarak sinirsiz sicratilabilirdi ((rate+0.01)*1.5
+-- her cagrida bilesik olarak buyur). Her (src, satici) cifti icin ayri
+-- cooldown -- ayni oyuncu ayni compromised saticiyi hizli spam edemez.
+local CompromisedTransactCooldown = {} -- [src#vendorId] = sonraki kullanim zamani (Matrix.Now())
+local COMPROMISED_TRANSACT_COOLDOWN_MS = 10000
+
 RegisterNetEvent('matrix:server:vendorPool:transactAtCompromised', function(vendorId)
     local src = source
+    if type(src) ~= 'number' or src <= 0 then return end
     vendorId = tonumber(vendorId)
     local vendor = vendorId and Matrix.VendorPool.Vendors[vendorId]
     if not vendor or not vendor.compromised then return end
+
+    local now = Matrix.Now()
+    local cdKey = src .. '#' .. vendorId
+    if CompromisedTransactCooldown[cdKey] and now < CompromisedTransactCooldown[cdKey] then
+        return
+    end
+    CompromisedTransactCooldown[cdKey] = now + math_floor(COMPROMISED_TRANSACT_COOLDOWN_MS / 1000)
 
     local zoneId = Matrix.Market.FindNearestZone and Matrix.Market.FindNearestZone(vendor.coords)
     if not zoneId then return end

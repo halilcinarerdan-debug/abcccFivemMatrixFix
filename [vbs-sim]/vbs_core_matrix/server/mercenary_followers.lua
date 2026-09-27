@@ -169,8 +169,16 @@ end
 
 function Matrix.Mercenary.ReportDismiss(src, remainingCount)
     if type(src) ~= 'number' or src <= 0 then return false end
-    FollowerCount[src] = math.max(0, tonumber(remainingCount) or 0)
-    SummonedBotIds[src] = {}  -- ★ EKLE
+    -- v6.6.6 H16: client'in bildirdigi remainingCount ARTIK guvenilmiyor --
+    -- keyfi bir deger (orn. hep 0) sunucunun sayacini sifirlayip
+    -- MaxFollowers limitini asmaya izin verirdi. Sunucu kendi sayacini
+    -- sabit 1 birim dusurur -- her dismiss bildirimi TEK bir takipciyi
+    -- temsil eder; client sadece TETIKLEYICI olur, karari sunucu verir.
+    local current = FollowerCount[src] or 0
+    FollowerCount[src] = math.max(0, current - 1)
+    if SummonedBotIds[src] and #SummonedBotIds[src] > 0 then
+        table.remove(SummonedBotIds[src])
+    end
     return true
 end
 
