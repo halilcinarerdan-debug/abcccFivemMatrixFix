@@ -3066,3 +3066,277 @@ Matrix.Chaos.RegisterModule('sql_static_scan',
 end)
 
 
+
+-- =====================================================================
+-- [v6.6.5 A5 PAKET 3] KOR NOKTA CHAOS MODULLERI
+--
+-- Paket 1'deki 3 detection check'in (matrix_diagnostics.lua) chaos
+-- versiyonu -- ayni regex/runtime-check mantigi, chaos'un Report()
+-- altyapisina baglanmis, BAGIMSIZ bir kopya olarak (chaos diagnostics'e
+-- bagimli olmaz). Bulgular '[KOR NOKTA]' etiketiyle raporlanir.
+--
+-- Mevcut chaos modulleri (replay, cannibal, sql_static_scan, vb.)
+-- BIREBIR DEGISTIRILMEDI -- bu blok sadece 3 yeni modul EKLER ve
+-- Matrix.Chaos.Run()'i additive olarak SARAR (orijinal Run() govdesi
+-- tek satir bile degismedi; wrapper sadece cagrilan modul listesine
+-- bu 3 modulu otomatik ekler).
+-- =====================================================================
+local KOR_NOKTA_TAG = '[KOR NOKTA]'
+
+-- Diagnostics'teki ile ayni mantik, burada BAGIMSIZ kopya.
+local function _KorNoktaSplitLines(src)
+    local lines = {}
+    for line in (src .. '\n'):gmatch('([^\n]*)\n') do
+        lines[#lines + 1] = line
+    end
+    return lines
+end
+
+local function _KorNoktaReadServerScriptList()
+    local resourceName = GetCurrentResourceName()
+    local files = {}
+    local ok, src = pcall(LoadResourceFile, resourceName, 'fxmanifest.lua')
+    if ok and type(src) == 'string' then
+        for path in src:gmatch("['\"](server/[%w_]+%.lua)['\"]") do
+            files[#files + 1] = path
+        end
+    end
+    return files
+end
+
+local function _KorNoktaResolveMatrixApi(x, y)
+    local ref = Matrix
+    ref = ref and x and ref[x]
+    ref = ref and y and ref[y]
+    if type(ref) == 'function' then return ref end
+    return nil
+end
+
+-- =====================================================================
+-- chaos_api_reference_scan -- [1.1]'in chaos versiyonu
+-- =====================================================================
+Matrix.Chaos.RegisterModule('chaos_api_reference_scan',
+    KOR_NOKTA_TAG .. ' Static API Reference Scan (Matrix.X.Y calisma zamaninda tanimli mi)',
+    function()
+        local A = Matrix.Chaos.Assert
+        A.SetContext('chaos_api_reference_scan', 'server/matrix_chaos.lua')
+
+        local files = _KorNoktaReadServerScriptList()
+        if #files == 0 then
+            Matrix.Chaos.Report('MEDIUM', KOR_NOKTA_TAG .. ' fxmanifest.lua server_scripts listesi okunamadi', {
+                impact = 'Tarama yapilamadi.',
+            })
+            return
+        end
+
+        local resourceName = GetCurrentResourceName()
+        local seen, order = {}, {}
+
+        for _, relPath in ipairs(files) do
+            local ok, src = pcall(LoadResourceFile, resourceName, relPath)
+            if ok and type(src) == 'string' then
+                local lines = _KorNoktaSplitLines(src)
+                for lineNo, line in ipairs(lines) do
+                    local trimmed = line:match('^%s*(.-)%s*$')
+                    if trimmed:sub(1, 2) ~= '--' then
+                        for x, y in line:gmatch('Matrix%.([%w_]+)%.([%w_]+)%s*%(') do
+                            local key = ('Matrix.%s.%s'):format(x, y)
+                            if not seen[key] then
+                                seen[key] = { file = relPath, line = lineNo }
+                                order[#order + 1] = key
+                            end
+                        end
+                        for x, y in line:gmatch('pcall%(%s*Matrix%.([%w_]+)%.([%w_]+)') do
+                            local key = ('Matrix.%s.%s'):format(x, y)
+                            if not seen[key] then
+                                seen[key] = { file = relPath, line = lineNo }
+                                order[#order + 1] = key
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        local failCount = 0
+        for _, key in ipairs(order) do
+            local x, y = key:match('^Matrix%.([%w_]+)%.([%w_]+)$')
+            if not _KorNoktaResolveMatrixApi(x, y) then
+                failCount = failCount + 1
+                local loc = seen[key]
+                Matrix.Chaos.Report('HIGH', ('%s tanimsiz API: %s'):format(KOR_NOKTA_TAG, key), {
+                    file   = loc.file,
+                    line   = loc.line,
+                    attack = 'Statik referans taramasi (regex tabanli, gercek parser degil)',
+                    impact = ('%s dosyasinda cagriliyor ama calisma zamaninda fonksiyon degil.'):format(loc.file),
+                    fix    = 'Ilgili modulde fonksiyonu tanimla veya cagriyi kaldir.',
+                })
+            end
+        end
+
+        if failCount == 0 then
+            Matrix.Chaos.Report('INFO', KOR_NOKTA_TAG .. ' Static API Reference Scan temiz', {
+                impact = ('%d benzersiz Matrix.X.Y referansi (%d dosya), hepsi tanimli.'):format(#order, #files),
+            })
+        end
+    end)
+
+-- =====================================================================
+-- chaos_fk_parent_guard_audit -- [1.2]'in chaos versiyonu
+-- =====================================================================
+Matrix.Chaos.RegisterModule('chaos_fk_parent_guard_audit',
+    KOR_NOKTA_TAG .. ' FK Parent Guard Audit (FlushDirty* INSERT/UPDATE)',
+    function()
+        local A = Matrix.Chaos.Assert
+        A.SetContext('chaos_fk_parent_guard_audit', 'server/matrix_chaos.lua')
+
+        local resourceName = GetCurrentResourceName()
+        local targets = { 'server/bureau.lua', 'server/market.lua' }
+        local GUARD_PATTERN = 'Matrix%.TrapHouses'
+        local flagged = {}
+        local failCount = 0
+
+        for _, relPath in ipairs(targets) do
+            local ok, src = pcall(LoadResourceFile, resourceName, relPath)
+            if ok and type(src) == 'string' then
+                local lines = _KorNoktaSplitLines(src)
+                local currentFlush = nil
+
+                for i, line in ipairs(lines) do
+                    local fnName = line:match('function%s+Matrix%.[%w_]+%.(FlushDirty[%w_]*)')
+                    if fnName then
+                        currentFlush = fnName
+                    elseif line:match('^end%s*$') then
+                        currentFlush = nil
+                    end
+
+                    if currentFlush
+                        and (line:match('INSERT%s+INTO%s+matrix_%w+') or line:match('UPDATE%s+matrix_%w+')) then
+                        local guarded = false
+                        for back = math.max(1, i - 5), i - 1 do
+                            if lines[back]:match(GUARD_PATTERN) then
+                                guarded = true
+                                break
+                            end
+                        end
+                        if not guarded then
+                            local dedupeKey = relPath .. ':' .. currentFlush
+                            if not flagged[dedupeKey] then
+                                flagged[dedupeKey] = true
+                                failCount = failCount + 1
+                                Matrix.Chaos.Report('CRITICAL', ('%s %s guard yok'):format(KOR_NOKTA_TAG, currentFlush), {
+                                    file   = relPath,
+                                    line   = i,
+                                    attack = 'FK parent guard denetimi (regex tabanli)',
+                                    impact = 'Silinen trap house icin INSERT/UPDATE denenebilir (FK constraint violation).',
+                                    fix    = 'Matrix.TrapHouses[id] parent-existence guard ekle.',
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if failCount == 0 then
+            Matrix.Chaos.Report('INFO', KOR_NOKTA_TAG .. ' FK Parent Guard Audit temiz', {
+                impact = 'Taranan FlushDirty* fonksiyonlarinda tum INSERT/UPDATE Matrix.TrapHouses guard icinde.',
+            })
+        end
+    end)
+
+-- =====================================================================
+-- chaos_teardown_audit -- [1.3]'un chaos versiyonu
+-- =====================================================================
+Matrix.Chaos.RegisterModule('chaos_teardown_audit',
+    KOR_NOKTA_TAG .. ' Fixture Teardown Audit (_DestroyDiagFixtureTrapHouse)',
+    function()
+        local A = Matrix.Chaos.Assert
+        A.SetContext('chaos_teardown_audit', 'server/matrix_chaos.lua')
+
+        local resourceName = GetCurrentResourceName()
+        local ok, src = pcall(LoadResourceFile, resourceName, 'server/matrix_diagnostics.lua')
+        if not ok or type(src) ~= 'string' then
+            Matrix.Chaos.Report('MEDIUM', KOR_NOKTA_TAG .. ' matrix_diagnostics.lua okunamadi', {
+                impact = 'Teardown denetimi yapilamadi.',
+            })
+            return
+        end
+
+        local lines = _KorNoktaSplitLines(src)
+        local bodyStart, bodyEnd = nil, nil
+        for i, line in ipairs(lines) do
+            if not bodyStart and line:match('^local function _DestroyDiagFixtureTrapHouse') then
+                bodyStart = i
+            elseif bodyStart and not bodyEnd and line:match('^end%s*$') then
+                bodyEnd = i
+            end
+        end
+
+        if not bodyStart then
+            Matrix.Chaos.Report('MEDIUM', KOR_NOKTA_TAG .. ' _DestroyDiagFixtureTrapHouse bulunamadi', {
+                file   = 'server/matrix_diagnostics.lua',
+                impact = 'Fixture teardown fonksiyonu tasindi/silindi mi kontrol edilmeli.',
+            })
+            return
+        end
+        bodyEnd = bodyEnd or #lines
+
+        local refs, order = {}, {}
+        for i = bodyStart, bodyEnd do
+            for x, y in lines[i]:gmatch('pcall%(%s*Matrix%.([%w_]+)%.([%w_]+)') do
+                local key = ('Matrix.%s.%s'):format(x, y)
+                if not refs[key] then
+                    refs[key] = i
+                    order[#order + 1] = key
+                end
+            end
+        end
+
+        local failCount = 0
+        for _, key in ipairs(order) do
+            local x, y = key:match('^Matrix%.([%w_]+)%.([%w_]+)$')
+            if not _KorNoktaResolveMatrixApi(x, y) then
+                failCount = failCount + 1
+                Matrix.Chaos.Report('CRITICAL', ('%s teardown tanimsiz API cagiriyor: %s'):format(KOR_NOKTA_TAG, key), {
+                    file   = 'server/matrix_diagnostics.lua',
+                    line   = refs[key],
+                    attack = 'Fixture teardown denetimi (regex tabanli)',
+                    impact = 'Teardown bu fonksiyonu cagiriyor ama tanimli degil -- guard sessizce atlar, RAM/DB state sizabilir.',
+                    fix    = 'Ilgili modulde fonksiyonu tanimla.',
+                })
+            end
+        end
+
+        if failCount == 0 then
+            Matrix.Chaos.Report('INFO', KOR_NOKTA_TAG .. ' Fixture Teardown Audit temiz', {
+                impact = ('%d teardown API referansi dogrulandi (satir %d-%d).'):format(#order, bodyStart, bodyEnd),
+            })
+        end
+    end)
+
+-- =====================================================================
+-- OTOMATIK CALISTIRMA: bu 3 modul her chaos kosusunda (secilen modul
+-- listesinden bagimsiz) otomatik calisir. Orijinal Matrix.Chaos.Run
+-- govdesi DEGISTIRILMEDI -- sadece additive olarak SARILDI (wrapper).
+-- =====================================================================
+local KOR_NOKTA_MODULES = { 'chaos_api_reference_scan', 'chaos_fk_parent_guard_audit', 'chaos_teardown_audit' }
+local _OriginalChaosRun = Matrix.Chaos.Run
+
+function Matrix.Chaos.Run(moduleList, replyTo)
+    local list = {}
+    if type(moduleList) == 'table' then
+        for _, name in ipairs(moduleList) do list[#list + 1] = name end
+    end
+
+    local already = {}
+    for _, name in ipairs(list) do already[name] = true end
+    for _, name in ipairs(KOR_NOKTA_MODULES) do
+        if not already[name] then
+            list[#list + 1] = name
+            already[name] = true
+        end
+    end
+
+    return _OriginalChaosRun(list, replyTo)
+end
