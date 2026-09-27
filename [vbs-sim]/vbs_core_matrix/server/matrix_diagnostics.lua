@@ -24,6 +24,18 @@ Matrix.Diagnostics = Matrix.Diagnostics or {}
 -- bastırılır. Test davranışı DEĞİŞMEZ — sadece log kalabalığı önlenir.
 Matrix.Diagnostics.IsRunning = false
 
+-- [A4-3] bureau.lua/police_raid.lua sadece Matrix.Diagnostics.IsRunning'i
+-- kontrol ediyor, Matrix.Chaos.Running'i bilmiyorlar (o dosyalar bu
+-- sprint'te degistirilmiyor). Bu helper diagnostics'in KENDI guard'larinda
+-- her iki bayragi da tek yerden okur; Run() ayrica kendi calisirken
+-- Matrix.Chaos.Running'i de set eder, boylece Chaos.Run() kendi mevcut
+-- re-entrance kontrolu (matrix_chaos.lua) uzerinden Diagnostics calisirken
+-- baslamayi reddeder.
+local function _IsAnyTestRunning()
+    return (Matrix.Diagnostics and Matrix.Diagnostics.IsRunning)
+        or (Matrix.Chaos and Matrix.Chaos.Running)
+end
+
 Matrix.Diagnostics = Matrix.Diagnostics or {}
 
 local pairs, ipairs, type, tostring, tonumber = pairs, ipairs, type, tostring, tonumber
@@ -1111,31 +1123,113 @@ end, 5000)
 -- =====================================================================
 -- Test 3: BureauLockdown — Aynı trap house'a eşzamanlı trigger
 -- =====================================================================
-RegisterRaceCheck('[FAZ 0.5] Race: Lockdown double-trigger', function()
-    local trapId
-    for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-    if not trapId then return { skip = true, reason = 'no_trap_house' } end
 
-    if Matrix.Bureau.IsLockedDown(trapId) then
-        pcall(Matrix.Bureau.LiftLockdown, trapId, 0.0)
-        Wait(100)
+-- [A4-2] DIAGNOSTICS FIXTURE — Chaos'un Fixture.Setup/Teardown desenini
+-- ornek alir (kopyalama degil, ayni pattern): deep-mode kontrolleri artik
+-- GERCEK trap house'lari mutasyona ugratmaz, kendi izole fixture'ini
+-- yaratir, testi onun uzerinde calistirir, is bitince fixture'i TAMAMEN
+-- siler. 'CHAOS-FIXTURE' on-eki korunur (chaos.lua'nin teardown sweep'i
+-- ayni sekilde tanir); '-DIAG-' eki chaos.lua'nin kendi fixture'lariyla
+-- cakismamasi icindir.
+local _diagFixtureSeq = 0
+
+local function _CreateDiagFixtureTrapHouse()
+    _diagFixtureSeq = _diagFixtureSeq + 1
+    local label = ('CHAOS-FIXTURE-TRAP-DIAG-%03d'):format(_diagFixtureSeq)
+    local x = 2500.0 + (_diagFixtureSeq * 40.0)
+    local y = -3500.0 - (_diagFixtureSeq * 25.0)
+    local z = 30.0
+
+    local ok, id = pcall(function()
+        return MySQL.insert.await([[
+            INSERT INTO matrix_trap_houses
+                (label, coord_x, coord_y, coord_z, decryption_confidence, cyber_leak_intensity,
+                 raid_ordered, straw_buyer_citizenid, structural_integrity, created_at)
+            VALUES (?, ?, ?, ?, 0.0, 0.0, 0, NULL, 1.00, NOW())
+        ]], { label, x, y, z })
+    end)
+    if not ok or type(id) ~= 'number' then
+        Matrix.Log('DIAGNOSTICS', '[HATA] Fixture trap house INSERT basarisiz: %s', tostring(id))
+        return nil
     end
 
-    local ok1 = pcall(Matrix.Bureau.TriggerLockdown, trapId, 1.0)
-    local ok2 = pcall(Matrix.Bureau.TriggerLockdown, trapId, 1.0)
-    Wait(300)
+    if Matrix.TrapHouses then
+        Matrix.TrapHouses[id] = {
+            id                    = id,
+            label                 = label,
+            coords                = vector3(x, y, z),
+            decryption_confidence = 0.0,
+            raid_ordered          = false,
+            straw_buyer_citizenid = nil,
+            structural_integrity  = 1.00,
+        }
+    end
+    return id
+end
 
-    local isLocked = Matrix.Bureau.IsLockedDown(trapId)
+local function _DestroyDiagFixtureTrapHouse(trapId)
+    if not trapId then return end
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_cash_decay WHERE trap_house_id = ?', { trapId })
+    end)
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_banking_escrow WHERE trap_house_id = ?', { trapId })
+    end)
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_positions WHERE trap_house_id = ?', { trapId })
+    end)
+    if Matrix.TrapHouses then Matrix.TrapHouses[trapId] = nil end
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_trap_houses WHERE id = ? AND label LIKE ?',
+            { trapId, 'CHAOS-FIXTURE%' })
+    end)
+end
 
-    pcall(Matrix.Bureau.LiftLockdown, trapId, 0.0)
-    Wait(100)
+-- fn(trapId) izole fixture trap house uzerinde calisir; sonuc ne olursa
+-- olsun (early return / hata firlatma) fixture HER ZAMAN silinir.
+-- seedPositions=true ise Positions.SeedDefaults ile slotlar onceden doldurulur
+-- (LOS/reflex testleri slot verisine ihtiyac duyar).
+local function _WithDiagFixtureTrapHouse(fn, seedPositions)
+    local trapId = _CreateDiagFixtureTrapHouse()
+    if not trapId then
+        return false, 'fixture trap house yaratilamadi'
+    end
+    if seedPositions and Matrix.Positions and Matrix.Positions.SeedDefaults then
+        pcall(Matrix.Positions.SeedDefaults, trapId)
+    end
 
-    return {
-        trap_id   = trapId,
-        call1_ok  = ok1,
-        call2_ok  = ok2,
-        is_locked = isLocked,
-    }
+    local ok, r1, r2 = pcall(fn, trapId)
+    _DestroyDiagFixtureTrapHouse(trapId)
+
+    if not ok then
+        return false, ('fixture test hata firlatti: %s'):format(tostring(r1))
+    end
+    return r1, r2
+end
+
+RegisterRaceCheck('[FAZ 0.5] Race: Lockdown double-trigger', function()
+    return _WithDiagFixtureTrapHouse(function(trapId)
+        if Matrix.Bureau.IsLockedDown(trapId) then
+            pcall(Matrix.Bureau.LiftLockdown, trapId, 0.0)
+            Wait(100)
+        end
+
+        local ok1 = pcall(Matrix.Bureau.TriggerLockdown, trapId, 1.0)
+        local ok2 = pcall(Matrix.Bureau.TriggerLockdown, trapId, 1.0)
+        Wait(300)
+
+        local isLocked = Matrix.Bureau.IsLockedDown(trapId)
+
+        pcall(Matrix.Bureau.LiftLockdown, trapId, 0.0)
+        Wait(100)
+
+        return {
+            trap_id   = trapId,
+            call1_ok  = ok1,
+            call2_ok  = ok2,
+            is_locked = isLocked,
+        }
+    end)
 end, 5000)
 
 -- =====================================================================
@@ -1415,33 +1509,35 @@ end
 
 
 -- =====================================================================
--- Chain Test 1: RemoveBot → botRemoving event
+-- Chain Test 1: TriggerLockdown → bureauLockdown event + IsLockedDown
+-- (Not: bu basligin altindaki blok kopyala-yapistir sirasinda "RemoveBot →
+-- botRemoving" zincir testinin yerine gecmisti; o test hic implemente
+-- edilmedi. RemoveBot → botRemoving zincir testi kapsam disi, v6.6.5'e
+-- tasinir.)
 -- =====================================================================
 RegisterChainCheck(
     '[FAZ 0.4] Chain: TriggerLockdown → bureauLockdown + IsLockedDown',
     function()
         _resetCounters()
 
-        local trapId
-        for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-        if not trapId then return { skip = true, reason = 'no_trap_house' } end
+        return _WithDiagFixtureTrapHouse(function(trapId)
+            -- ★ [DIAGNOSTIC ISOLATION v4] Gerçek TriggerLockdown çağır.
+            -- bureau.lua'daki IsRunning guard'ı sadece LOG'u bastırıyor,
+            -- state.lockdown_active = true ve event fırlatma normal akıyor.
+            -- Bu sayede IsLockedDown doğru döner, event sayacı artar.
+            Matrix.Bureau.TriggerLockdown(trapId, 1.0)
+            Wait(200)
 
-        -- ★ [DIAGNOSTIC ISOLATION v4] Gerçek TriggerLockdown çağır.
-        -- bureau.lua'daki IsRunning guard'ı sadece LOG'u bastırıyor,
-        -- state.lockdown_active = true ve event fırlatma normal akıyor.
-        -- Bu sayede IsLockedDown doğru döner, event sayacı artar.
-        Matrix.Bureau.TriggerLockdown(trapId, 1.0)
-        Wait(200)
+            local isLocked = Matrix.Bureau.IsLockedDown(trapId)
 
-        local isLocked = Matrix.Bureau.IsLockedDown(trapId)
+            Matrix.Bureau.LiftLockdown(trapId, 0.0)
 
-        Matrix.Bureau.LiftLockdown(trapId, 0.0)
-
-        return {
-            trap_id              = trapId,
-            lockdown_event_count = _getCount('matrix:internal:bureauLockdown'),
-            is_locked            = isLocked,
-        }
+            return {
+                trap_id              = trapId,
+                lockdown_event_count = _getCount('matrix:internal:bureauLockdown'),
+                is_locked            = isLocked,
+            }
+        end)
     end,
     function(result)
         if result.skip then return true, ('ATLANDI -- %s'):format(result.reason or '?') end
@@ -1465,34 +1561,23 @@ RegisterChainCheck(
     function()
         _resetCounters()
 
-        local trapId
-        for id, house in pairs(Matrix.TrapHouses or {}) do
-            if house and not house.raid_ordered then
-                trapId = id
-                break
-            end
-        end
-        if not trapId then return { skip = true, reason = 'no_available_trap_house' } end
+        return _WithDiagFixtureTrapHouse(function(trapId)
+            local house = Matrix.TrapHouses[trapId]
 
-        local house = Matrix.TrapHouses[trapId]
+            -- ★ [DIAGNOSTIC ISOLATION] Sadece event fırlat — gerçek IssueRaid
+            -- ÇAĞIRMA (bureau.lua log/state yan etkisi olmasın). Event zinciri
+            -- aksın diye flag'i manuel set ediyoruz; fixture zaten test
+            -- sonunda TAMAMEN silinecegi icin ayrica geri almaya gerek yok.
+            house.raid_ordered = true
+            TriggerEvent('matrix:internal:raidIssued', trapId, 20, 'ram', 3)
+            Wait(200)
 
-        -- ★ [DIAGNOSTIC ISOLATION] Sadece event fırlat — gerçek IssueRaid
-        -- ÇAĞIRMA (bureau.lua log/state yan etkisi olmasın). Event zinciri
-        -- aksın diye flag'i manuel set ediyoruz, test sonunda geri alıyoruz.
-        house.raid_ordered = true
-        TriggerEvent('matrix:internal:raidIssued', trapId, 20, 'ram', 3)
-        Wait(200)
-
-        local result = {
-            trap_id              = trapId,
-            raid_event_count     = _getCount('matrix:internal:raidIssued'),
-            raid_ordered_after   = house.raid_ordered,
-        }
-
-        -- ★ Cleanup: bir sonraki testin kirli state görmemesi için
-        house.raid_ordered = false
-
-        return result
+            return {
+                trap_id              = trapId,
+                raid_event_count     = _getCount('matrix:internal:raidIssued'),
+                raid_ordered_after   = house.raid_ordered,
+            }
+        end)
     end,
     function(result)
         if result.skip then return true, ('ATLANDI -- %s'):format(result.reason or '?') end
@@ -1504,52 +1589,6 @@ RegisterChainCheck(
         end
         return true, ('raidIssued %d kez + raid_ordered flag OK (trap #%d)'):format(
             result.raid_event_count, result.trap_id or 0)
-    end,
-    2000
-)
-
--- =====================================================================
--- Chain Test 3: BureauLockdown → lockdown event + IsLockedDown true
--- =====================================================================
-RegisterChainCheck(
-    '[FAZ 0.4] Chain: TriggerLockdown → bureauLockdown + IsLockedDown',
-        function()
-        _resetCounters()
-
-        local trapId
-        for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-        if not trapId then return { skip = true, reason = 'no_trap_house' } end
-
-        -- ★ [DIAGNOSTIC ISOLATION FIX v3] TriggerLockdown() yerine event
-        -- doğrudan fırlat. Chain testi sadece event zincirini + IsLockedDown
-        -- durumunu doğrular. Gerçek lockdown yan etkileri (district hub
-        -- freeze, NUKLEER ABLUKA log'u) tetiklenmemeli.
-                -- Gerçek TriggerLockdown çağır — state set eder, event fırlatır,
-        -- log'u bureau.lua'daki IsRunning guard'ı bastırır.
-        Matrix.Bureau.TriggerLockdown(trapId, 1.0)
-        Wait(200)
-
-        local isLocked = Matrix.Bureau.IsLockedDown(trapId)
-
-        Matrix.Bureau.LiftLockdown(trapId, 0.0)
-
-        return {
-            trap_id              = trapId,
-            lockdown_event_count = _getCount('matrix:internal:bureauLockdown'),
-            is_locked            = isLocked,
-        }
-    end,
-
-    function(result)
-        if result.skip then return true, ('ATLANDI -- %s'):format(result.reason or '?') end
-        if (result.lockdown_event_count or 0) < 1 then
-            return false, 'bureauLockdown TetIKLENMEDI'
-        end
-        if result.is_locked ~= true then
-            return false, 'IsLockedDown TRUE donmedi'
-        end
-        return true, ('bureauLockdown %d kez + IsLockedDown OK (trap #%d)'):format(
-            result.lockdown_event_count, result.trap_id or 0)
     end,
     2000
 )
@@ -2518,7 +2557,6 @@ local function RunConcurrencyStressCheck()
         for i = 1, concurrency do if finished[i] then n = n + 1 end end
         return n
     end)()
-    assert(notDone == 0, ('%d/%d worker zaman asimina ugradi (%dms)'):format(notDone, concurrency, waitedMs))
 
     local rows = MySQL.query.await(
         'SELECT COUNT(*) AS cnt, COALESCE(SUM(removed_ok), 0) AS ok_sum FROM matrix_diagnostics_stress_log WHERE run_token = ?',
@@ -2527,8 +2565,12 @@ local function RunConcurrencyStressCheck()
     local cnt   = rows[1] and tonumber(rows[1].cnt) or 0
     local okSum = rows[1] and tonumber(rows[1].ok_sum) or 0
 
+    -- [A4-6] Cleanup DELETE artik ilk assert'ten ONCE calisir -- bir timeout
+    -- (notDone ~= 0) durumunda bile stress_log satirlari burada silinir;
+    -- assert sonrasi hicbir cleanup atlanamaz.
     pcall(function() MySQL.query.await('DELETE FROM matrix_diagnostics_stress_log WHERE run_token = ?', { runToken }) end)
 
+    assert(notDone == 0, ('%d/%d worker zaman asimina ugradi (%dms)'):format(notDone, concurrency, waitedMs))
     assert(cnt == concurrency,
         ('%d/%d satir DB\'ye ulasti -- kayip yazma = RACE CONDITION KANITI'):format(cnt, concurrency))
     assert(okSum == concurrency,
@@ -2717,8 +2759,17 @@ local function AbortResourceBoot(reason)
 end
 
 function Matrix.Diagnostics.Run(deep, replyTo, isAutoBoot)
+    -- [A4-4] Re-entrance kilidi: baslamadan ONCE kontrol et. Otomatik boot +
+    -- manuel /matrix_run_diagnostics cakisirsa (veya Chaos suruyorsa) ayni
+    -- gercek trap house'a ic ice lockdown tetiklenmesin.
+    if _IsAnyTestRunning() then
+        Matrix.Log('DIAGNOSTICS', '[RE-ENTRANCE BLOCK] Zaten calisiyor (Diagnostics veya Chaos).')
+        return lastReport
+    end
+
     CreateThread(function()
         Matrix.Diagnostics.IsRunning = true
+        if Matrix.Chaos then Matrix.Chaos.Running = true end
         local startedAt = GetGameTimer()
         local checks = {}
 
@@ -3022,6 +3073,7 @@ function Matrix.Diagnostics.Run(deep, replyTo, isAutoBoot)
 
                 TriggerClientEvent('matrix:client:diagnosticsSealed', -1, lastReport)
         Matrix.Diagnostics.IsRunning = false
+        if Matrix.Chaos then Matrix.Chaos.Running = false end
     end)
 end
 
@@ -4521,36 +4573,34 @@ AddCheck('[POSITIONS] Seed determinizmi (2x seed -> ayni koordinat)', function()
         return false, 'SeedDefaults yok'
     end
 
-    local trapId
-    for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-    if not trapId then return true, 'ATLANDI -- Matrix.TrapHouses bos' end
+    return _WithDiagFixtureTrapHouse(function(trapId)
+        -- 1. Seed
+        local ok1, err1 = Matrix.Positions.SeedDefaults(trapId)
+        if not ok1 then return false, ('ilk seed basarisiz: %s'):format(tostring(err1)) end
+        local s1 = Matrix.Positions.GetSlot(trapId, 1)
+        if not s1 then return false, 'slot 1 yok (ilk seed)' end
+        local x1, y1, z1 = s1.coord_x, s1.coord_y, s1.coord_z
+        local bx1, by1 = s1.backup_x, s1.backup_y
 
-    -- 1. Seed
-    local ok1, err1 = Matrix.Positions.SeedDefaults(trapId)
-    if not ok1 then return false, ('ilk seed basarisiz: %s'):format(tostring(err1)) end
-    local s1 = Matrix.Positions.GetSlot(trapId, 1)
-    if not s1 then return false, 'slot 1 yok (ilk seed)' end
-    local x1, y1, z1 = s1.coord_x, s1.coord_y, s1.coord_z
-    local bx1, by1 = s1.backup_x, s1.backup_y
+        -- 2. Seed tekrar
+        local ok2, err2 = Matrix.Positions.SeedDefaults(trapId)
+        if not ok2 then return false, ('ikinci seed basarisiz: %s'):format(tostring(err2)) end
+        local s2 = Matrix.Positions.GetSlot(trapId, 1)
+        if not s2 then return false, 'slot 1 yok (ikinci seed)' end
 
-    -- 2. Seed tekrar
-    local ok2, err2 = Matrix.Positions.SeedDefaults(trapId)
-    if not ok2 then return false, ('ikinci seed basarisiz: %s'):format(tostring(err2)) end
-    local s2 = Matrix.Positions.GetSlot(trapId, 1)
-    if not s2 then return false, 'slot 1 yok (ikinci seed)' end
+        local EPS = 0.001
+        if math.abs(s2.coord_x - x1) > EPS
+            or math.abs(s2.coord_y - y1) > EPS
+            or math.abs(s2.coord_z - z1) > EPS then
+            return false, ('koordinat drift: (%.3f,%.3f,%.3f) -> (%.3f,%.3f,%.3f)'):format(
+                x1, y1, z1, s2.coord_x, s2.coord_y, s2.coord_z)
+        end
+        if bx1 and s2.backup_x and math.abs(s2.backup_x - bx1) > EPS then
+            return false, 'yedek koordinat drift'
+        end
 
-    local EPS = 0.001
-    if math.abs(s2.coord_x - x1) > EPS
-        or math.abs(s2.coord_y - y1) > EPS
-        or math.abs(s2.coord_z - z1) > EPS then
-        return false, ('koordinat drift: (%.3f,%.3f,%.3f) -> (%.3f,%.3f,%.3f)'):format(
-            x1, y1, z1, s2.coord_x, s2.coord_y, s2.coord_z)
-    end
-    if bx1 and s2.backup_x and math.abs(s2.backup_x - bx1) > EPS then
-        return false, 'yedek koordinat drift'
-    end
-
-    return true, ('trap #%d slot 1: (%.2f,%.2f,%.2f) — 2x seed ayni'):format(trapId, x1, y1, z1)
+        return true, ('trap #%d slot 1: (%.2f,%.2f,%.2f) — 2x seed ayni'):format(trapId, x1, y1, z1)
+    end)
 end)
 
 AddCheck('[POSITIONS] LOS geometrik (mesafe + FOV + pitch)', function()
@@ -4560,49 +4610,47 @@ AddCheck('[POSITIONS] LOS geometrik (mesafe + FOV + pitch)', function()
         return false, 'CanSeeSlot/GetSlot yok'
     end
 
-    local trapId
-    for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-    if not trapId then return true, 'ATLANDI -- Matrix.TrapHouses bos' end
+    return _WithDiagFixtureTrapHouse(function(trapId)
+        local slot = Matrix.Positions.GetSlot(trapId, 1)  -- gate slotu
+        if not slot then return true, 'ATLANDI -- slot 1 yok (fixture seed basarisiz)' end
 
-    local slot = Matrix.Positions.GetSlot(trapId, 1)  -- gate slotu
-    if not slot then return true, 'ATLANDI -- slot 1 yok (once /slotseed)' end
+        -- Aktif noktayı al
+        local ax, ay, az, ah
+        if slot.using_backup == 1 and slot.backup_x then
+            ax, ay, az, ah = slot.backup_x, slot.backup_y, slot.backup_z, slot.backup_heading or slot.heading
+        else
+            ax, ay, az, ah = slot.coord_x, slot.coord_y, slot.coord_z, slot.heading
+        end
 
-    -- Aktif noktayı al
-    local ax, ay, az, ah
-    if slot.using_backup == 1 and slot.backup_x then
-        ax, ay, az, ah = slot.backup_x, slot.backup_y, slot.backup_z, slot.backup_heading or slot.heading
-    else
-        ax, ay, az, ah = slot.coord_x, slot.coord_y, slot.coord_z, slot.heading
-    end
+        -- Test 1: Çok yakın nokta (5m ileri, heading yönünde) — görünmeli
+        local rad = math.rad(ah)
+        -- GTA heading 0=N, atan 0=E → atan açı = 90 - heading
+        local atanRad = math.rad(90.0 - ah)
+        local nearX = ax + math.cos(atanRad) * 5.0
+        local nearY = ay + math.sin(atanRad) * 5.0
+        local visible, dist = Matrix.Positions.CanSeeSlot(trapId, 1, nearX, nearY, az)
+        if not visible then
+            return false, ('yakin nokta (5m) gorunmedi — LOS cok dar (mesafe=%.2f)'):format(dist or -1)
+        end
 
-    -- Test 1: Çok yakın nokta (5m ileri, heading yönünde) — görünmeli
-    local rad = math.rad(ah)
-    -- GTA heading 0=N, atan 0=E → atan açı = 90 - heading
-    local atanRad = math.rad(90.0 - ah)
-    local nearX = ax + math.cos(atanRad) * 5.0
-    local nearY = ay + math.sin(atanRad) * 5.0
-    local visible, dist = Matrix.Positions.CanSeeSlot(trapId, 1, nearX, nearY, az)
-    if not visible then
-        return false, ('yakin nokta (5m) gorunmedi — LOS cok dar (mesafe=%.2f)'):format(dist or -1)
-    end
+        -- Test 2: Çok uzak nokta (100m) — görünmemeli (gate LOS 25m)
+        local farX = ax + math.cos(atanRad) * 100.0
+        local farY = ay + math.sin(atanRad) * 100.0
+        local visibleFar = Matrix.Positions.CanSeeSlot(trapId, 1, farX, farY, az)
+        if visibleFar then
+            return false, 'uzak nokta (100m) gorundu — mesafe filtresi calismiyor'
+        end
 
-    -- Test 2: Çok uzak nokta (100m) — görünmemeli (gate LOS 25m)
-    local farX = ax + math.cos(atanRad) * 100.0
-    local farY = ay + math.sin(atanRad) * 100.0
-    local visibleFar = Matrix.Positions.CanSeeSlot(trapId, 1, farX, farY, az)
-    if visibleFar then
-        return false, 'uzak nokta (100m) gorundu — mesafe filtresi calismiyor'
-    end
+        -- Test 3: Aynı mesafe, ters yön (arkada) — görünmemeli (FOV dışı)
+        local backX = ax - math.cos(atanRad) * 5.0
+        local backY = ay - math.sin(atanRad) * 5.0
+        local visibleBack = Matrix.Positions.CanSeeSlot(trapId, 1, backX, backY, az)
+        if visibleBack then
+            return false, 'arka nokta gorundu — FOV filtresi calismiyor'
+        end
 
-    -- Test 3: Aynı mesafe, ters yön (arkada) — görünmemeli (FOV dışı)
-    local backX = ax - math.cos(atanRad) * 5.0
-    local backY = ay - math.sin(atanRad) * 5.0
-    local visibleBack = Matrix.Positions.CanSeeSlot(trapId, 1, backX, backY, az)
-    if visibleBack then
-        return false, 'arka nokta gorundu — FOV filtresi calismiyor'
-    end
-
-    return true, ('yakin=OK uzak=OK arka=OK (slot tipi=%s)'):format(slot.slot_type)
+        return true, ('yakin=OK uzak=OK arka=OK (slot tipi=%s)'):format(slot.slot_type)
+    end, true)
 end)
 
 AddCheck('[POSITIONS] Reflex state gecisi (under_fire -> using_backup)', function()
@@ -4612,56 +4660,44 @@ AddCheck('[POSITIONS] Reflex state gecisi (under_fire -> using_backup)', functio
         return false, 'MarkUnderFire/GetSlot yok'
     end
 
-    local trapId
-    for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-    if not trapId then return true, 'ATLANDI -- Matrix.TrapHouses bos' end
+    return _WithDiagFixtureTrapHouse(function(trapId)
+        -- Slot 1 (gate) — yedek var
+        local slot = Matrix.Positions.GetSlot(trapId, 1)
+        if not slot then return true, 'ATLANDI -- slot 1 yok (fixture seed basarisiz)' end
 
-    -- Slot 1 (gate) — yedek var
-    local slot = Matrix.Positions.GetSlot(trapId, 1)
-    if not slot then return true, 'ATLANDI -- slot 1 yok (once /slotseed)' end
+        -- Başlangıç durumu: temiz (fixture yeni yaratildi, zaten temiz olmali)
+        if slot.under_fire ~= 0 or slot.using_backup ~= 0 then
+            return false, 'slot 1 temiz degil — fixture seed sonrasi beklenmeyen durum'
+        end
 
-    -- Başlangıç durumu: temiz
-    if slot.under_fire ~= 0 or slot.using_backup ~= 0 then
-        return false, 'slot 1 temiz degil — onceki test kirli birakti'
-    end
-
-    -- MarkUnderFire çağır
-    Matrix.Positions.MarkUnderFire(trapId, 1)
-    Wait(100)
-
-    local sAfter = Matrix.Positions.GetSlot(trapId, 1)
-    if sAfter.under_fire ~= 1 then
-        return false, ('under_fire=1 olmadi (gelen: %s)'):format(tostring(sAfter.under_fire))
-    end
-    if sAfter.using_backup ~= 1 then
-        return false, ('using_backup=1 olmadi (gelen: %s)'):format(tostring(sAfter.using_backup))
-    end
-
-    -- Slot 7 (escape) yedek yok → using_backup her zaman 0 kalmalı
-    local slot7 = Matrix.Positions.GetSlot(trapId, 7)
-    if slot7 then
-        Matrix.Positions.MarkUnderFire(trapId, 7)
+        -- MarkUnderFire çağır
+        Matrix.Positions.MarkUnderFire(trapId, 1)
         Wait(100)
-        local s7 = Matrix.Positions.GetSlot(trapId, 7)
-        if s7.under_fire ~= 1 then
-            return false, 'slot 7 under_fire=1 olmadi'
-        end
-        if s7.using_backup == 1 then
-            return false, 'slot 7 (escape) using_backup=1 — yedegi olmamali'
-        end
-    end
 
-    -- Cleanup — slot 1'i temizle (bir sonraki boot temiz başlasın)
-    pcall(function()
-        MySQL.prepare(
-            'UPDATE matrix_positions SET under_fire = 0, using_backup = 0 WHERE trap_house_id = ? AND slot_index IN (1, 7)',
-            { trapId })
-    end)
-    slot.under_fire = 0
-    slot.using_backup = 0
-    if slot7 then slot7.under_fire = 0; slot7.using_backup = 0 end
+        local sAfter = Matrix.Positions.GetSlot(trapId, 1)
+        if sAfter.under_fire ~= 1 then
+            return false, ('under_fire=1 olmadi (gelen: %s)'):format(tostring(sAfter.under_fire))
+        end
+        if sAfter.using_backup ~= 1 then
+            return false, ('using_backup=1 olmadi (gelen: %s)'):format(tostring(sAfter.using_backup))
+        end
 
-    return true, 'under_fire=1 → using_backup=1 (yedek olan slot); slot 7 (escape) dogru sekilde yedeksiz'
+        -- Slot 7 (escape) yedek yok → using_backup her zaman 0 kalmalı
+        local slot7 = Matrix.Positions.GetSlot(trapId, 7)
+        if slot7 then
+            Matrix.Positions.MarkUnderFire(trapId, 7)
+            Wait(100)
+            local s7 = Matrix.Positions.GetSlot(trapId, 7)
+            if s7.under_fire ~= 1 then
+                return false, 'slot 7 under_fire=1 olmadi'
+            end
+            if s7.using_backup == 1 then
+                return false, 'slot 7 (escape) using_backup=1 — yedegi olmamali'
+            end
+        end
+
+        return true, 'under_fire=1 → using_backup=1 (yedek olan slot); slot 7 (escape) dogru sekilde yedeksiz'
+    end, true)
 end)
 
 AddCheck('[POSITIONS] SQL guvenli payload (slot_type + citizenid)', function()
@@ -4670,34 +4706,32 @@ AddCheck('[POSITIONS] SQL guvenli payload (slot_type + citizenid)', function()
         return false, 'AssignBot yok'
     end
 
-    local trapId
-    for id in pairs(Matrix.TrapHouses or {}) do trapId = id break end
-    if not trapId then return true, 'ATLANDI -- Matrix.TrapHouses bos' end
-
-    -- Slot 6 (inner) muhtemelen boş — SQL inject citizenid dene
-    local payloads = {
-        "'; DROP TABLE matrix_positions; --",
-        "1' OR '1'='1",
-    }
-    for _, cid in ipairs(payloads) do
-        -- Önce slotu temizle
-        pcall(Matrix.Positions.ReleaseSlot, trapId, 6)
-        Wait(50)
-        local ok, err = pcall(Matrix.Positions.AssignBot, trapId, 6, nil, cid)
-        if not ok then
-            return false, ('AssignBot payload hata firlatti: %s'):format(tostring(err))
+    return _WithDiagFixtureTrapHouse(function(trapId)
+        -- Slot 6 (inner) — SQL inject citizenid dene
+        local payloads = {
+            "'; DROP TABLE matrix_positions; --",
+            "1' OR '1'='1",
+        }
+        for _, cid in ipairs(payloads) do
+            -- Önce slotu temizle
+            pcall(Matrix.Positions.ReleaseSlot, trapId, 6)
+            Wait(50)
+            local ok, err = pcall(Matrix.Positions.AssignBot, trapId, 6, nil, cid)
+            if not ok then
+                return false, ('AssignBot payload hata firlatti: %s'):format(tostring(err))
+            end
+            pcall(Matrix.Positions.ReleaseSlot, trapId, 6)
         end
-        pcall(Matrix.Positions.ReleaseSlot, trapId, 6)
-    end
 
-    -- Tablo hala var mı?
-    local ok, rows = pcall(function()
-        return MySQL.query.await('SELECT COUNT(*) AS c FROM matrix_positions', {})
-    end)
-    if not ok or type(rows) ~= 'table' then
-        return false, 'matrix_positions tablosu ERISILEMEDI -- DROP riski?'
-    end
+        -- Tablo hala var mı?
+        local ok, rows = pcall(function()
+            return MySQL.query.await('SELECT COUNT(*) AS c FROM matrix_positions', {})
+        end)
+        if not ok or type(rows) ~= 'table' then
+            return false, 'matrix_positions tablosu ERISILEMEDI -- DROP riski?'
+        end
 
-    return true, ('2 payload zararsiz, tablo hala mevcut (%d satir)'):format(
-        rows[1] and tonumber(rows[1].c) or 0)
+        return true, ('2 payload zararsiz, tablo hala mevcut (%d satir)'):format(
+            rows[1] and tonumber(rows[1].c) or 0)
+    end, true)
 end)

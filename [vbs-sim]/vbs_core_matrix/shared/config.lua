@@ -1835,6 +1835,11 @@ Config.GangPresence = {
 -- ★★★ CHAOS ENGINE — YAMYAM MODU ★★★
 -- Bir HACKER gibi saldırır. Normal oyunda sıfır etki.
 -- =====================================================================
+-- Not: chaos komutlari (/matrix_chaos_baslat vb.) artik 'matrix.chaos' ACE
+-- izni gerektiriyor (defense in depth -- Config.Chaos.Enabled=false tek
+-- basina yeterli degil). server.cfg'ye eklenmesi gereken satirlar:
+--   add_ace group.admin matrix.chaos allow
+--   add_ace group.superadmin matrix.chaos allow
 Config.Chaos = {
     Enabled            = false,     -- ★ PRODUCTION'DA MUTLAKA false
     RunOnResourceStart = false,

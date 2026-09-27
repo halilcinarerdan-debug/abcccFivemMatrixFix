@@ -649,7 +649,20 @@ local function _Reply(src, msg)
     end
 end
 
+-- Defense in depth: restricted=true (ACE 'command.matrix_chaos_*' server.cfg
+-- tarafinda taninmali) YETMEZ -- Config.Chaos.Enabled=false tek basina bir
+-- config hatasi olabilir. Iç kontrol ayrica 'matrix.chaos' ACE'sini sorar.
+-- Ikisi de gecmeyen src fail-closed REDDEDILIR.
+local function _IsChaosAceAllowed(src)
+    local ok, allowed = pcall(IsPlayerAceAllowed, src, 'matrix.chaos')
+    return ok == true and allowed == true
+end
+
 RegisterCommand('matrix_chaos_baslat', function(src, args)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
     if not Config.Chaos or not Config.Chaos.Enabled then
         _Reply(src, 'Chaos devre disi.')
         return
@@ -675,24 +688,42 @@ RegisterCommand('matrix_chaos_baslat', function(src, args)
     end
 
     Matrix.Chaos.Run(list, src)
-end, false)
+end, true)
 
 RegisterCommand('matrix_chaos_durdur', function(src)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
     if Matrix.Chaos.Stop() then _Reply(src, 'Durdurma sinyali gonderildi.')
     else _Reply(src, 'Zaten calismiyor.') end
-end, false)
+end, true)
 
 RegisterCommand('matrix_chaos_listele', function(src)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
     _Reply(src, '=== MEVCUT SALDIRI MODULLERI ===')
     for _, name in ipairs(Matrix.Chaos.GetModules()) do
         local mod = Matrix.Chaos.Modules[name]
         _Reply(src, ('  %s — %s'):format(name, mod.description))
     end
-end, false)
+end, true)
 
-RegisterCommand('matrix_chaos_rapor', function(src) Matrix.Chaos.PrintSummary(src) end, false)
+RegisterCommand('matrix_chaos_rapor', function(src)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
+    Matrix.Chaos.PrintSummary(src)
+end, true)
 
 RegisterCommand('matrix_chaos_fixture_test', function(src)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
     _Reply(src, 'Fixture test basliyor...')
     local f = Matrix.Chaos.Fixture.Setup({ traps = 2, bots = 5, dispatches = 2, fleet = 1 })
     _Reply(src, ('Setup: %d trap, %d bot, %d dispatch, %d fleet'):format(
@@ -700,7 +731,7 @@ RegisterCommand('matrix_chaos_fixture_test', function(src)
     Wait(1000)
     Matrix.Chaos.Fixture.Teardown()
     _Reply(src, 'Teardown tamamlandi.')
-end, false)
+end, true)
 
 
 -- ═════════════════════════════════════════════════════════════════════
