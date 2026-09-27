@@ -400,14 +400,22 @@ RegisterNetEvent('matrix:server:coercionCompleted', function(coercionId)
         }
     end
 
+    -- v6.6.6 H19: handler_citizenid coercion basariyla tamamlanir tamamlanmaz
+    -- atanir -- coercion'i yapan oyuncu (src) bu ajanin handler'i olur.
+    -- Bu olmadan bot.handler_citizenid hep nil kalir ve hangi handler'in
+    -- hangi bota bagli oldugu asla belli olmazdi (orn. bureau.lua'nin
+    -- _IsRaidDispatcher kontrolu bu alana bagimlidir).
+    local handlerState = Matrix.GetOrCreatePlayerState(src)
+
     Matrix.Candidates[cid] = {
-        id              = cid,
-        citizenid       = data.citizenid or ('coerced_%d'):format(cid),
-        name            = data.name or ('Ajan-%d'):format(cid),
-        psychology      = traits,
-        addiction_level = tonumber(data.addiction_level) or 0.0,
-        revealed_fields = {},
-        coerced         = true
+        id                = cid,
+        citizenid         = data.citizenid or ('coerced_%d'):format(cid),
+        handler_citizenid = handlerState and handlerState.citizenid,
+        name              = data.name or ('Ajan-%d'):format(cid),
+        psychology        = traits,
+        addiction_level   = tonumber(data.addiction_level) or 0.0,
+        revealed_fields   = {},
+        coerced           = true
     }
 
     -- Otomatik bot devşirme (tam baskı sonrası)
@@ -579,6 +587,7 @@ function Matrix.Recruitment.Promote(candidate)
     local bot = Matrix.CreateBotRecord({
         name              = candidate.name,
         role              = 'dealer',
+        handler_citizenid = candidate.handler_citizenid,
         fear_factor       = candidate.psychology.fear_factor,
         resilience        = candidate.psychology.resilience,
         snitch_tendency   = candidate.psychology.snitch_tendency,

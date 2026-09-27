@@ -831,11 +831,24 @@ function Matrix.Supplier.OnPickup(actorRef, dropId, creditCitizenid)
     if not dropCfg then return false, 'bad_drop' end
 
     local actor = Matrix.ResolveActor(actorRef)
+
+    -- v6.6.6 H13: teslim alan actor, bu dead-drop'un atanmis sahibi
+    -- (RequestDrop'ta kaydedilen drop.citizenid) olmali. creditCitizenid
+    -- parametresi keyfi sekilde farkli bir citizenid'e kredi/ceza
+    -- yonlendirmek icin ARTIK kullanilamaz -- sahiplik dogrulanir,
+    -- fail-closed.
+    local actorCitizenid = actor and (actor.citizenid or (actor.state and actor.state.citizenid))
+    if not actorCitizenid or actorCitizenid ~= drop.citizenid then
+        Matrix.Log('LOGISTICS', '[YETKI RED] OnPickup: drop #%d sahibi degil (actor=%s, sahip=%s).',
+            dropId, tostring(actorCitizenid), tostring(drop.citizenid))
+        return false, 'not_drop_owner'
+    end
+
     local fingerprintQuality = actor and Matrix.Forensics.ComputeFingerprintQuality(actor) or 1.0
     local forensicTraceLeft = fingerprintQuality < Config.Supplier.ForensicTraceQualityThreshold
     local heat = DropHeat[dropId] or 0.0
 
-    local citizenid = creditCitizenid or drop.citizenid
+    local citizenid = drop.citizenid   -- ★ v6.6.6: creditCitizenid artik guvenilmiyor
     local rec = Matrix.Supplier.GetTrustRecord(citizenid, drop.supplier_id)
 
     if forensicTraceLeft or heat > 0.0 then
@@ -1613,6 +1626,16 @@ RegisterNetEvent('matrix:server:assignFleetVehicle', function(plate, botId)
     if type(src) ~= 'number' or src <= 0 then return end
     botId = tonumber(botId)
     if type(plate) ~= 'string' or not botId then return end
+
+    -- v6.6.6 H12: cagiran, bu aracin kayitli sahibi olmali (fail-closed).
+    local vehicle = Matrix.Fleet.GetVehicle(plate)
+    local state = Matrix.GetOrCreatePlayerState(src)
+    if not vehicle or not state or not state.citizenid
+        or vehicle.registered_by_citizenid ~= state.citizenid then
+        Matrix.Log('LOGISTICS', '[YETKI RED] assignFleetVehicle: src=%d plate=%s sahibi degil.', src, tostring(plate))
+        return
+    end
+
     Matrix.Fleet.AssignPermanent(plate, botId)
 end)
 
@@ -1621,6 +1644,16 @@ RegisterNetEvent('matrix:server:unassignFleetVehicle', function(plate)
     local src = source
     if type(src) ~= 'number' or src <= 0 then return end
     if type(plate) ~= 'string' then return end
+
+    -- v6.6.6 H12: cagiran, bu aracin kayitli sahibi olmali (fail-closed).
+    local vehicle = Matrix.Fleet.GetVehicle(plate)
+    local state = Matrix.GetOrCreatePlayerState(src)
+    if not vehicle or not state or not state.citizenid
+        or vehicle.registered_by_citizenid ~= state.citizenid then
+        Matrix.Log('LOGISTICS', '[YETKI RED] unassignFleetVehicle: src=%d plate=%s sahibi degil.', src, tostring(plate))
+        return
+    end
+
     Matrix.Fleet.UnassignPermanent(plate)
 end)
 

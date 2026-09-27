@@ -357,6 +357,16 @@ lib.callback.register('matrix:callback:getBotInventoryItems', function(src, botI
     botId = tonumber(botId)
     if not botId or not Matrix.Bots[botId] then return {} end
 
+    -- v6.6.6 H20: cagiran, bu botun bagli oldugu trap house interior'inda
+    -- olmali (fail-closed) -- yoksa herhangi bir oyuncu uzaktan herhangi
+    -- bir botun envanterini okuyabilirdi.
+    local myTrapHouse = Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    local bot = Matrix.Bots[botId]
+    if not myTrapHouse or not bot.state or bot.state.trap_house_id ~= myTrapHouse then
+        Matrix.Log('TRAPHOUSE', '[YETKI RED] getBotInventoryItems: src=%s bot #%d kendi trap house disinda.',
+            tostring(src), botId)
+        return {}
+    end
 
     local ok, inv = pcall(function()
         return exports['ox_inventory']:GetInventory(GetBotInventoryId(botId))
@@ -389,6 +399,15 @@ RegisterNetEvent('matrix:server:trapHouseInterior:giveItemToBot', function(botId
     count = tonumber(count) or 1
     if not botId or not Matrix.Bots[botId] or not playerSlot or count < 1 then
         Reply(src, 'Gecersiz teslimat parametreleri.')
+        return
+    end
+
+    -- v6.6.6 H20: bot, cagiranin ICINDE OLDUGU trap house'a bagli olmali.
+    local myTrapHouse = Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    local bot = Matrix.Bots[botId]
+    if not myTrapHouse or not bot.state or bot.state.trap_house_id ~= myTrapHouse then
+        Reply(src, 'Bu bot sizin bulundugunuz trap house icinde degil.')
+        Matrix.Log('TRAPHOUSE', '[YETKI RED] giveItemToBot: src=%d bot #%d kendi trap house disinda.', src, botId)
         return
     end
 
@@ -441,6 +460,18 @@ RegisterNetEvent('matrix:server:trapHouseInterior:transferBotToBot', function(fr
     if not fromBotId or not Matrix.Bots[fromBotId] or not toBotId or not Matrix.Bots[toBotId]
         or type(itemName) ~= 'string' or count < 1 then
         Reply(src, 'Gecersiz aktarim parametreleri.')
+        return
+    end
+
+    -- v6.6.6 H20: iki bot da cagiranin ICINDE OLDUGU trap house'a bagli olmali.
+    local myTrapHouse = Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    local fromBot, toBot = Matrix.Bots[fromBotId], Matrix.Bots[toBotId]
+    if not myTrapHouse
+        or not fromBot.state or fromBot.state.trap_house_id ~= myTrapHouse
+        or not toBot.state or toBot.state.trap_house_id ~= myTrapHouse then
+        Reply(src, 'Bu botlar sizin bulundugunuz trap house icinde degil.')
+        Matrix.Log('TRAPHOUSE', '[YETKI RED] transferBotToBot: src=%d bot #%d/#%d kendi trap house disinda.',
+            src, fromBotId, toBotId)
         return
     end
 

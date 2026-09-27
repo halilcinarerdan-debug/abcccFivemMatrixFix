@@ -66,6 +66,14 @@ CreateThread(function()
     Matrix.DistrictHubs.LoadHubs()
 end)
 
+-- v6.6.6 A8 -- YENI: debug_map.lua bu fonksiyonu cagiriyordu ama hic
+-- tanimli degildi (guard'lanmis oldugu icin sessizce atlaniyordu, admin
+-- haritasinda hub'lar hic gorunmuyordu). Salt-okunur getter -- Hubs
+-- tablosunun kendisi degistirilemez sekilde disariya acilir.
+function Matrix.DistrictHubs.GetAll()
+    return Hubs
+end
+
 -- ★ [M-10 FIX] pcall + transaction.await — dirty flag SADECE başarı
 -- sonrası temizlenir (logistics/market/door FlushDirty* deseniyle AYNI).
 local function FlushDirtyHubs()
@@ -118,6 +126,21 @@ function Matrix.DistrictHubs.Assign(trapHouseId, label, coords, dispatcherSrc)
         return false, 'no_trap_house'
     end
     if not IsValidCoords(coords) then return false, 'bad_coords' end
+
+    -- v6.6.6 H18: fail-closed yetki kapisi -- cagiran Hierarchy komut
+    -- yetkisine sahip olmali (Leader/Logistics_Officer). Aksi halde
+    -- herhangi bir oyuncu rakip/rastgele bir trap house'a hub atayabilirdi.
+    -- Konsoldan (dispatcherSrc yok/0) cagirilirsa serbest (bootstrap/test).
+    if type(dispatcherSrc) == 'number' and dispatcherSrc > 0 then
+        local state = Matrix.GetOrCreatePlayerState(dispatcherSrc)
+        if not state or not state.citizenid
+            or not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority)
+            or not Matrix.Hierarchy.HasCommandAuthority(state.citizenid) then
+            Matrix.Log('DISTRICT_HUB', '[YETKI RED] Assign: src=%s trap #%s icin yetkisiz erisim denemesi.',
+                tostring(dispatcherSrc), tostring(trapHouseId))
+            return false, 'insufficient_authority'
+        end
+    end
 
     if Matrix.Bureau and Matrix.Bureau.IsLockedDown and Matrix.Bureau.IsLockedDown(trapHouseId) then
         return false, 'bureau_lockdown'

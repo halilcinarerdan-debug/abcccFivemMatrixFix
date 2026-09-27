@@ -42,10 +42,13 @@ end
 
 local function _HasCommandAuthority(src)
     if type(src) ~= 'number' or src <= 0 then return false end
-    if not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority) then return true end
-    local state = Matrix.GetOrCreatePlayerState and Matrix.GetOrCreatePlayerState(src)
-    if not state or not state.citizenid then return false end
-    return Matrix.Hierarchy.HasCommandAuthority(state.citizenid)
+    -- v6.6.6 H17: fail-closed -- Matrix.Hierarchy henuz yuklenmemisse
+    -- REDDET, asla acma (nil/eksik modul = yetkisiz demek).
+    if not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority) then return false end
+    local ok, state = pcall(Matrix.GetOrCreatePlayerState, src)
+    if not ok or not state or not state.citizenid then return false end
+    local authOk, hasAuth = pcall(Matrix.Hierarchy.HasCommandAuthority, state.citizenid)
+    return authOk and hasAuth == true
 end
 
 local function _Broadcast(text, agentId)
