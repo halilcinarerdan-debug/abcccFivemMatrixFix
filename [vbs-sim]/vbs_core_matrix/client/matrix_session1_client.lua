@@ -52,12 +52,18 @@ local function SpawnStationaryPed(coords, modelName)
     local hash = LoadModelSync(modelName)
     if not hash then return nil end
 
-    -- ★ [TERRAIN FIX] Önce zemin Z'sini bul (havada spawn olmasın)
-    local spawnZ = coords.z
-    local found, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, coords.z + 5.0, false)
-    if found then spawnZ = groundZ + 0.5 end
-
-    local ped = CreatePed(4, hash, coords.x, coords.y, spawnZ, coords.w, false, true)
+    -- ★ [PLAYTEST HOTFIX] Eskiden GetGroundZFor_3dCoord, ped oluşturulmadan/
+    -- collision yüklenmeden ÖNCE çağrılıyordu -- onClientResourceStart'ta
+    -- oyuncu bu koordinattan uzakta olduğunda çevre collision'ı henüz
+    -- yüklenmemiş oluyor, GetGroundZFor_3dCoord "found=false" dönüyor ve
+    -- config'teki ELLE YAZILMIŞ (yaklaşık 2-3m yüksek) Z değeri ham haliyle
+    -- kullanılıyordu. PlaceObjectOnGroundProperly de zaten hatalı yükseklikte
+    -- spawn olmuş ped'i güvenilir şekilde düzeltemiyordu. Şimdi: ped önce
+    -- config Z'sinde oluşturulur, collision yüklenmesi (HasCollisionLoadedAroundEntity
+    -- -- entity gerektirir, bu yüzden ped'den ÖNCE sorgulanamaz) beklenir,
+    -- ANCAK ONDAN SONRA zemin Z'si TEKRAR sorgulanıp ped doğrudan o Z'ye
+    -- taşınır.
+    local ped = CreatePed(4, hash, coords.x, coords.y, coords.z, coords.w, false, true)
     if not ped or ped == 0 or not DoesEntityExist(ped) then
         SetModelAsNoLongerNeeded(hash)
         return nil
@@ -80,12 +86,19 @@ local function SpawnStationaryPed(coords, modelName)
 
     RequestCollisionAtCoord(coords.x, coords.y, coords.z)
     local cWait = 0
-    while not HasCollisionLoadedAroundEntity(ped) and cWait < 2000 do
+    while not HasCollisionLoadedAroundEntity(ped) and cWait < 4000 do
         Wait(25)
         cWait = cWait + 25
     end
 
-    -- ★ Fizik + zemin snap
+    -- ★ Collision artık yüklü -- zemin Z'sini GÜVENİLİR şekilde sorgula ve
+    -- ped'i doğrudan oraya taşı (config'teki elle yazılmış Z'ye güvenme).
+    local found, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, coords.z + 5.0, false)
+    if found then
+        SetEntityCoords(ped, coords.x, coords.y, groundZ + 0.5, false, false, false, false)
+    end
+
+    -- ★ Fizik + zemin snap (son ince ayar)
     PlaceObjectOnGroundProperly(ped)
 
     Wait(2000)

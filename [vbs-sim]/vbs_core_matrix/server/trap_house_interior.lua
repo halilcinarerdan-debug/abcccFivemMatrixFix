@@ -342,12 +342,42 @@ end
 
 --- ★ client/trap_house_client.lua'nın kapı blip'lerini/E-tetiklerini
 --- çizebilmesi için trap house dünya konumlarını (id+coords+label) döner.
---- Adli/ekonomik hiçbir hassas veri taşımaz — yalnızca zaten haritada
---- bilinmesi gereken kapı konumlarıdır.
+--- ★ [PLAYTEST GÜVENLİK FIX] Eskiden TÜM trap house'lar HERKESE
+--- gönderiliyordu (yer/varlık sızıntısı). Artık main.lua'nın
+--- ResolvePlayerTrapHouseScope'uyla AYNI yetki modeli burada da
+--- uygulanır: sadece kendi handler olduğu botların bağlı olduğu
+--- trap house'lar + Leader/Logistics_Officer için TÜMÜ.
 lib.callback.register('matrix:callback:getTrapHouseLocations', function(src)
+    local state = Matrix.GetOrCreatePlayerState(src)
+    local citizenid = state and state.citizenid
+    if not citizenid then return {} end
+
+    local visibleIds = {}
+
+    -- 1) Handler olduğu botların bağlı olduğu trap house'lar
+    for _, bot in pairs(Matrix.Bots or {}) do
+        if bot.handler_citizenid == citizenid
+           and bot.state and bot.state.trap_house_id then
+            visibleIds[bot.state.trap_house_id] = true
+        end
+    end
+
+    -- 2) Yüksek rütbeli (Leader / Logistics_Officer) → tüm trap house'lar
+    if Matrix.Hierarchy and type(Matrix.Hierarchy.GetRank) == 'function' then
+        local rank = Matrix.Hierarchy.GetRank(citizenid)
+        if rank == 'Leader' or rank == 'Logistics_Officer' then
+            for id in pairs(Matrix.TrapHouses or {}) do
+                visibleIds[id] = true
+            end
+        end
+    end
+
     local list = {}
-    for id, house in pairs(Matrix.TrapHouses or {}) do
-        list[#list + 1] = { id = id, coords = house.coords, label = house.label }
+    for id in pairs(visibleIds) do
+        local house = Matrix.TrapHouses and Matrix.TrapHouses[id]
+        if house then
+            list[#list + 1] = { id = id, coords = house.coords, label = house.label }
+        end
     end
     return list
 end)
@@ -553,7 +583,15 @@ CreateThread(function()
             local src = tonumber(srcStr)
             if src and src > 0 then
                 local bucket = GetPlayerRoutingBucket(src)
-                if bucket and bucket > baseBucket then
+                -- ★ [PLAYTEST HOTFIX] PlayerInteriorState[src] BU OTURUMDA
+                -- enter handler tarafından zaten doğru şekilde set edilmiş
+                -- olabilir (oyuncu normal şekilde AZ ÖNCE girdi). Bu durumda
+                -- bucket'ın dolu olması "crash kalıntısı" DEĞİL, aktif/geçerli
+                -- bir interior oturumudur -- dokunma. Gerçek crash-recovery
+                -- senaryosu sadece PlayerInteriorState boşken (resource restart
+                -- sonrası RAM sıfırlanmış) native bucket hâlâ eskiden kalmışsa
+                -- geçerlidir.
+                if bucket and bucket > baseBucket and not PlayerInteriorState[src] then
                     local trapId = bucket - baseBucket
                     local house = Matrix.TrapHouses[trapId]
 

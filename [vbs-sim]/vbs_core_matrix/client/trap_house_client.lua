@@ -121,7 +121,12 @@ local function RefreshTrapHouseBlipsInner()
             SetBlipSprite(blip, 1)
             SetBlipColour(blip, 4) -- monokrom gri-mavi, dikkat cekmeyen
             SetBlipScale(blip, 0.55)
-            SetBlipAsShortRange(blip, true)
+            -- ★ [PLAYTEST HOTFIX] ShortRange=true blip'i P haritasında
+            -- yalnızca oyuncu yakınken gösteriyordu (uzaktayken kayboluyor
+            -- gibi görünüyordu). Sahibinin kendi trap house'unu HER ZAMAN
+            -- haritada görmesi gerektiği için kalıcı gösterime çevrildi.
+            SetBlipAsShortRange(blip, false)
+            SetBlipDisplay(blip, 4)
             BeginTextCommandSetBlipName('STRING')
             AddTextComponentString('Dokuntu Kapi')
             EndTextCommandSetBlipName(blip)
