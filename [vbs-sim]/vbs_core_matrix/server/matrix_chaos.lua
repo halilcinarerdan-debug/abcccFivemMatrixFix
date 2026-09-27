@@ -3292,3 +3292,26 @@ function Matrix.Chaos.Run(moduleList, replyTo)
 
     return _OriginalChaosRun(list, replyTo)
 end
+
+-- =====================================================================
+-- ★ v6.6.6 HARDCORE CHAOS — Paket F: 5 hardcore modülü tek komutla
+-- çalıştırır. _IsChaosAceAllowed / _Reply bu dosyada zaten mevcut.
+-- =====================================================================
+RegisterCommand('matrix_chaos_hardcore', function(src)
+    if not _IsChaosAceAllowed(src) then
+        _Reply(src, 'Yetkisiz (matrix.chaos ACE gerekir).')
+        return
+    end
+    if not Config.Chaos or not Config.Chaos.HardcoreEnabled then
+        _Reply(src, 'Hardcore kapali (Config.Chaos.HardcoreEnabled=false).')
+        return
+    end
+    local list = {
+        'chaos_world_state_fuzzer',
+        'chaos_transition_storm',
+        'chaos_client_bridge_fuzzer',
+        'chaos_authority_bypass_tester',
+        'chaos_ui_persistence_audit',
+    }
+    Matrix.Chaos.Run(list, src)
+end, true)
