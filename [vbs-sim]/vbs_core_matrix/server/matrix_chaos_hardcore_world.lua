@@ -155,20 +155,24 @@ Matrix.Chaos.RegisterModule('chaos_world_state_fuzzer',
                             fix    = 'Her kod yolunda acikca true/false dondur.',
                         })
                     elseif dispatchOk == true then
-                        -- Spawn edildiyse gecerli/non-zero bir handle olmali.
-                        if bot and bot.state and bot.state.spawned == true
-                           and type(bot.state.net_id) == 'number' and bot.state.net_id ~= 0 then
-                            Matrix.Chaos.Report('INFO', HARDCORE_TAG .. ' A3 temiz: absurd Z ile spawn edildi, net_id gecerli', {
-                                evidence = ('net_id=%s'):format(tostring(bot.state.net_id)),
-                            })
-                        else
-                            Matrix.Chaos.Report('HIGH', HARDCORE_TAG .. ' A3 FAIL: dispatch true dondu ama bot.state gecersiz', {
-                                file   = 'server/main.lua',
-                                impact = 'spawned/net_id tutarsiz -- sifir/nil handle ile "basarili" denebilir.',
-                            })
-                        end
+                        -- ★ DUZELTME: absurd Z (harita disi koordinat) ile
+                        -- spawn KABUL EDILMEMELI -- bu REGRESYONDUR, "temiz"
+                        -- degil. bot.state (net_id/spawned) evidence olarak
+                        -- rapora eklenir.
+                        Matrix.Chaos.Report('HIGH', HARDCORE_TAG .. ' A3 REGRESYON: harita disi koordinat kabul edildi', {
+                            file   = 'server/main.lua',
+                            attack = 'origin/destination = vector3(0,0,9999)',
+                            impact = 'BeginPhysicalDispatch, harita disi (Z=9999) koordinati reddetmeden spawn etti.',
+                            fix    = 'origin/destination icin makul Z bounds kontrolu ekle (fail-closed).',
+                            evidence = ('spawned=%s net_id=%s'):format(
+                                tostring(bot and bot.state and bot.state.spawned),
+                                tostring(bot and bot.state and bot.state.net_id)),
+                        })
                         -- Temizlik: bu test-dispatch fixture teardown'dan bagimsiz,
-                        -- modul sonunda kalinti kalmasin.
+                        -- modul sonunda kalinti kalmasin. Matrix.RemoveBot DEGIL --
+                        -- o fixture bot kaydini TAMAMEN siler (Teardown zaten
+                        -- yapacak); burada sadece spawn edilen ped'i geri cekmek
+                        -- yeterli ve dogru olan (Matrix.DespawnBot, main.lua:701).
                         pcall(Matrix.DespawnBot, botId)
                         Matrix.Dispatches[botId] = nil
                     else
@@ -176,6 +180,11 @@ Matrix.Chaos.RegisterModule('chaos_world_state_fuzzer',
                         Matrix.Chaos.Report('INFO', HARDCORE_TAG .. ' A3 temiz: absurd Z fail-closed reddedildi', {
                             evidence = ('reason=%s'):format(tostring(reason)),
                         })
+                        -- ★ DUZELTME 3: her iki yolda da partial-state
+                        -- leak olmasin -- false yolunda normalde zaten nil
+                        -- olmali (BeginPhysicalDispatch bu noktaya kadar
+                        -- Matrix.Dispatches'a hic yazmaz), ama garanti icin.
+                        Matrix.Dispatches[botId] = nil
                     end
                 end
             end
