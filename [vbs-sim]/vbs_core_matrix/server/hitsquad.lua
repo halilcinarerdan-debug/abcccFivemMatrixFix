@@ -217,7 +217,10 @@ local function TickPlayer(src)
     -- anlamsız (native reddeder, sessizce spam yapar).
     if squad.phase == 'dismounted' then
         if squad.entity_net_id then
-            Matrix.StreetCover.RequestScan(src, squad.entity_net_id)
+            -- v6.6.6: LegacyHitsquad=false, RequestScan stub
+            if Matrix.StreetCover and Matrix.StreetCover.RequestScan then
+                Matrix.StreetCover.RequestScan(src, squad.entity_net_id)
+            end
         end
     end
 
