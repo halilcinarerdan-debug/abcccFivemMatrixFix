@@ -120,28 +120,17 @@ Matrix.Chaos.RegisterModule('chaos_transition_storm',
         end
 
         -- ═══════════════════════════════════════════════════════════
-        -- SENARYO 4: playerDropped sonra exit -- disconnect race.
-        -- NOT: 'playerDropped' GLOBAL bir FXServer event'i -- bu resource
-        -- icindeki TUM playerDropped handler'lari (13 dosya) tetiklenir.
-        -- Bu KASITLI -- gercek hedef sadece trap_house_interior.lua degil,
-        -- tum kod tabaninin sahte/ambient source ile disconnect event'ine
-        -- dayanikli oldugunu dogrulamak.
+        -- SENARYO 4 KALDIRILDI (v6.6.6 hotfix): 'playerDropped' GLOBAL
+        -- bir FXServer event'i -- bu resource disindaki 3. parti
+        -- resource'larin (pma-voice, xt-prison, monitor vb.) handler'larini
+        -- da tetikliyordu; onlar gercek bir player disconnect'i bekleyip
+        -- source yerine sahte bir string alinca kendi ic format()
+        -- cagrilarinda crash ediyordu. Sahte playerDropped tetiklemek
+        -- kendi kod tabanimizin disina tasan, guvenli olmayan bir yan
+        -- etki -- bu yuzden tamamen kaldirildi. Diger senaryolar (1,2,3,
+        -- 5,6) SADECE kendi matrix:server:trapHouseInterior:* event'lerimizi
+        -- cagirdigindan guvenli ve DEGISTIRILMEDI.
         -- ═══════════════════════════════════════════════════════════
-        do
-            local okDrop = pcall(TriggerEvent, 'playerDropped', 'CHAOS-FIXTURE-DISCONNECT')
-            local okExit = pcall(TriggerEvent, 'matrix:server:trapHouseInterior:exit')
-
-            if not okDrop or not okExit then
-                Matrix.Chaos.Report('HIGH', HARDCORE_TAG .. ' SENARYO 4 CRASH: disconnect race sirasinda hata firladi', {
-                    file   = 'server/trap_house_interior.lua',
-                    attack = 'TriggerEvent(playerDropped) -> TriggerEvent(exit)',
-                    impact = ('playerDropped ok=%s, exit ok=%s'):format(tostring(okDrop), tostring(okExit)),
-                    fix    = 'Ilgili playerDropped handler\'inda (13 dosyadan biri) guard eksik olabilir.',
-                })
-            else
-                Matrix.Chaos.Report('INFO', HARDCORE_TAG .. ' SENARYO 4 temiz: disconnect race crash yok', {})
-            end
-        end
 
         -- ═══════════════════════════════════════════════════════════
         -- SENARYO 5: ayni trap'e iki kez ust uste enter (source=0/nil,
