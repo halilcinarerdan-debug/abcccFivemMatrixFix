@@ -293,6 +293,228 @@ local function AddCheck(name, fn)
     FastChecks[#FastChecks + 1] = { name = name, fn = fn }
 end
 
+-- =====================================================================
+-- [v6.6.5 A5] KOR NOKTA GUCLENDIRME -- DETECTION (PAKET 1, fix YOK)
+--
+-- Kok neden: chaos statik pattern arar ama RUNTIME API varligini test
+-- etmez; diagnostics fixture izolasyonu yapar ama cagirdigi API'lerin
+-- VAR OLDUGUNU dogrulamaz; hicbir katman "silinen parent icin cocuk
+-- INSERT" riskini denetlemez. Bu 3 check o kor noktalari KAPATMAZ --
+-- sadece TESPIT eder (fix Paket 2'de, ayri commit'te).
+--
+-- NOT: Bu check'ler regex tabanli statik metin taramasidir -- gercek
+-- bir Lua parser degildir. Yorum satirlari (trimmed '--' ile baslayan)
+-- elenir ama string literal icindeki veya satir-ici yorumdaki eslesmeler
+-- yanlis pozitif verebilir. FAIL = bulgu, kesin hata degil; insan
+-- gozden gecirmesi gerekir.
+-- =====================================================================
+
+-- fxmanifest.lua'nin server_scripts blogundan dosya listesini ceker --
+-- liste burada TEKRAR elle yazilip driftlenmesin (tek gercek kaynak).
+local function _ReadServerScriptList()
+    local resourceName = GetCurrentResourceName()
+    local files = {}
+    local ok, src = pcall(LoadResourceFile, resourceName, 'fxmanifest.lua')
+    if ok and type(src) == 'string' then
+        for path in src:gmatch("['\"](server/[%w_]+%.lua)['\"]") do
+            files[#files + 1] = path
+        end
+    end
+    return files
+end
+
+-- Metin govdesini satirlara boler (satir numarasi korunur).
+local function _SplitLines(src)
+    local lines = {}
+    for line in (src .. '\n'):gmatch('([^\n]*)\n') do
+        lines[#lines + 1] = line
+    end
+    return lines
+end
+
+-- 'Matrix.X.Y' yolunu RUNTIME'da cozer; fonksiyon degilse nil doner.
+local function _ResolveMatrixApi(x, y)
+    local ref = Matrix
+    ref = ref and x and ref[x]
+    ref = ref and y and ref[y]
+    if type(ref) == 'function' then return ref end
+    return nil
+end
+
+-- =====================================================================
+-- [1.1] STATIC API REFERENCE SCANNER
+-- server/*.lua icindeki Matrix.X.Y cagrilarini (dogrudan cagri VEYA
+-- pcall'a fonksiyon olarak verilen referans) tarar; her biri icin
+-- RUNTIME'da Matrix[X][Y] gercekten bir fonksiyon mu diye dogrular.
+-- =====================================================================
+AddCheck('[KOR NOKTA 1.1] Static API Reference Scanner (Matrix.X.Y runtime)', function()
+    local files = _ReadServerScriptList()
+    if #files == 0 then
+        return false, 'fxmanifest.lua server_scripts listesi okunamadi -- tarama yapilamadi'
+    end
+    local resourceName = GetCurrentResourceName()
+
+    local seen  = {}   -- 'Matrix.X.Y' -> { file = ..., line = ... } (ilk gorulen konum)
+    local order = {}
+
+    for _, relPath in ipairs(files) do
+        local ok, src = pcall(LoadResourceFile, resourceName, relPath)
+        if ok and type(src) == 'string' then
+            local lines = _SplitLines(src)
+            for lineNo, line in ipairs(lines) do
+                local trimmed = line:match('^%s*(.-)%s*$')
+                if trimmed:sub(1, 2) ~= '--' then
+                    for x, y in line:gmatch('Matrix%.([%w_]+)%.([%w_]+)%s*%(') do
+                        local key = ('Matrix.%s.%s'):format(x, y)
+                        if not seen[key] then
+                            seen[key] = { file = relPath, line = lineNo }
+                            order[#order + 1] = key
+                        end
+                    end
+                    for x, y in line:gmatch('pcall%(%s*Matrix%.([%w_]+)%.([%w_]+)') do
+                        local key = ('Matrix.%s.%s'):format(x, y)
+                        if not seen[key] then
+                            seen[key] = { file = relPath, line = lineNo }
+                            order[#order + 1] = key
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local fails = {}
+    for _, key in ipairs(order) do
+        local x, y = key:match('^Matrix%.([%w_]+)%.([%w_]+)$')
+        if not _ResolveMatrixApi(x, y) then
+            local loc = seen[key]
+            fails[#fails + 1] = ('tanimsiz API: %s (kaynak: %s:%d)'):format(key, loc.file, loc.line)
+        end
+    end
+
+    if #fails > 0 then
+        table.sort(fails)
+        return false, ('%d tanimsiz API referansi -- %s'):format(#fails, table.concat(fails, ' | '))
+    end
+    return true, ('%d benzersiz Matrix.X.Y referansi tarandi (%d dosya), hepsi runtime tanimli'):format(#order, #files)
+end)
+
+-- =====================================================================
+-- [1.2] FK PARENT GUARD AUDITOR
+-- bureau.lua + market.lua icindeki FlushDirty* fonksiyonlarini bulur;
+-- her INSERT INTO/UPDATE matrix_X cagrisinin uzerindeki 5 satirda
+-- Matrix.TrapHouses parent-existence guard'i olup olmadigini denetler.
+-- =====================================================================
+AddCheck('[KOR NOKTA 1.2] FK Parent Guard Auditor (FlushDirty* INSERT/UPDATE)', function()
+    local resourceName = GetCurrentResourceName()
+    local targets = { 'server/bureau.lua', 'server/market.lua' }
+    local GUARD_PATTERN = 'Matrix%.TrapHouses'
+
+    local fails   = {}
+    local flagged = {}   -- dedupe: 'dosya:fonksiyon' -> true (fonksiyon basina 1 bulgu)
+
+    for _, relPath in ipairs(targets) do
+        local ok, src = pcall(LoadResourceFile, resourceName, relPath)
+        if ok and type(src) == 'string' then
+            local lines = _SplitLines(src)
+            local currentFlush = nil
+
+            for i, line in ipairs(lines) do
+                local fnName = line:match('function%s+Matrix%.[%w_]+%.(FlushDirty[%w_]*)')
+                if fnName then
+                    currentFlush = fnName
+                elseif line:match('^end%s*$') then
+                    -- Ust seviye fonksiyon kapanisi (bu kod tabanindaki stil:
+                    -- ic blok end'leri girintili, fonksiyon end'i kolon 0'da).
+                    currentFlush = nil
+                end
+
+                if currentFlush
+                    and (line:match('INSERT%s+INTO%s+matrix_%w+') or line:match('UPDATE%s+matrix_%w+')) then
+                    local guarded = false
+                    for back = math.max(1, i - 5), i - 1 do
+                        if lines[back]:match(GUARD_PATTERN) then
+                            guarded = true
+                            break
+                        end
+                    end
+                    if not guarded then
+                        local dedupeKey = relPath .. ':' .. currentFlush
+                        if not flagged[dedupeKey] then
+                            flagged[dedupeKey] = true
+                            fails[#fails + 1] = ('%s guard yok -> FK risk (%s:%d)'):format(
+                                currentFlush, relPath, i)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if #fails > 0 then
+        table.sort(fails)
+        return false, ('%d FlushDirty* fonksiyonu parent guard yok -- %s'):format(#fails, table.concat(fails, ' | '))
+    end
+    return true, 'Taranan FlushDirty* fonksiyonlarinda tum INSERT/UPDATE Matrix.TrapHouses guard icinde'
+end)
+
+-- =====================================================================
+-- [1.3] FIXTURE TEARDOWN AUDIT
+-- _DestroyDiagFixtureTrapHouse govdesindeki pcall(Matrix.X.Y, ...)
+-- cagrilarini cikarir, her biri icin runtime existence check yapar.
+-- =====================================================================
+AddCheck('[KOR NOKTA 1.3] Fixture Teardown Audit (_DestroyDiagFixtureTrapHouse)', function()
+    local resourceName = GetCurrentResourceName()
+    local ok, src = pcall(LoadResourceFile, resourceName, 'server/matrix_diagnostics.lua')
+    if not ok or type(src) ~= 'string' then
+        return false, 'server/matrix_diagnostics.lua okunamadi'
+    end
+
+    local lines = _SplitLines(src)
+    local bodyStart, bodyEnd = nil, nil
+    for i, line in ipairs(lines) do
+        if not bodyStart and line:match('^local function _DestroyDiagFixtureTrapHouse') then
+            bodyStart = i
+        elseif bodyStart and not bodyEnd and line:match('^end%s*$') then
+            bodyEnd = i
+        end
+    end
+
+    if not bodyStart then
+        return false, '_DestroyDiagFixtureTrapHouse bulunamadi -- fixture teardown fonksiyonu tasindi/silindi mi?'
+    end
+    bodyEnd = bodyEnd or #lines
+
+    local refs  = {}
+    local order = {}
+    for i = bodyStart, bodyEnd do
+        for x, y in lines[i]:gmatch('pcall%(%s*Matrix%.([%w_]+)%.([%w_]+)') do
+            local key = ('Matrix.%s.%s'):format(x, y)
+            if not refs[key] then
+                refs[key] = i
+                order[#order + 1] = key
+            end
+        end
+    end
+
+    if #order == 0 then
+        return true, ('_DestroyDiagFixtureTrapHouse (satir %d-%d) hicbir Matrix.X.Y API cagirmiyor -- denetlenecek referans yok'):format(bodyStart, bodyEnd)
+    end
+
+    local fails = {}
+    for _, key in ipairs(order) do
+        local x, y = key:match('^Matrix%.([%w_]+)%.([%w_]+)$')
+        if not _ResolveMatrixApi(x, y) then
+            fails[#fails + 1] = ('teardown cagiriyor ama tanimli degil: %s (satir %d)'):format(key, refs[key])
+        end
+    end
+
+    if #fails > 0 then
+        return false, ('%d teardown API referansi tanimsiz -- %s'):format(#fails, table.concat(fails, ' | '))
+    end
+    return true, ('%d teardown API referansi dogrulandi, hepsi tanimli fonksiyon'):format(#order)
+end)
+
 
 -- =====================================================================
 -- ★ [FAZ 0.2] İZOMORFİK LOG PIPELINE DOĞRULAMASI
