@@ -1400,6 +1400,26 @@ local function _DestroyDiagFixtureTrapHouse(trapId)
     pcall(function()
         MySQL.query.await('DELETE FROM matrix_positions WHERE trap_house_id = ?', { trapId })
     end)
+    -- v6.6.5 Paket 2: bureau.lua'daki RAM dirty-set'leri (learningCore/
+    -- dirtyIntel/patternLog/vb.) temizle -- yoksa TriggerLockdown/
+    -- LiftLockdown gibi cagrilarla kirlenen state, trap house RAM'den
+    -- ve DB'den silindikten SONRA bile bir sonraki FlushDirty* tick'inde
+    -- artik var olmayan bu parent icin INSERT/UPDATE denemeye calisir.
+    pcall(Matrix.Bureau.ClearLearningState, trapId)
+    -- matrix_bureau_learning_core / matrix_bureau_intel / matrix_pattern_log
+    -- FK ile matrix_trap_houses'a bagli (ON DELETE CASCADE YOK) -- bu
+    -- satirlar once silinmeden asagidaki matrix_trap_houses DELETE'i
+    -- FK constraint violation ile sessizce basarisiz olabilirdi (pcall
+    -- yutar, satir silinmeden kalirdi).
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_bureau_learning_core WHERE trap_house_id = ?', { trapId })
+    end)
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_bureau_intel WHERE trap_house_id = ?', { trapId })
+    end)
+    pcall(function()
+        MySQL.query.await('DELETE FROM matrix_pattern_log WHERE trap_house_id = ?', { trapId })
+    end)
     if Matrix.TrapHouses then Matrix.TrapHouses[trapId] = nil end
     pcall(function()
         MySQL.query.await('DELETE FROM matrix_trap_houses WHERE id = ? AND label LIKE ?',

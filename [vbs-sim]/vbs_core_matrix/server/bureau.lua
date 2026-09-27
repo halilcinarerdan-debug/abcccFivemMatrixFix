@@ -187,7 +187,9 @@ function Matrix.Bureau.FlushDirtyPatternLog()
                 local delta = count - already
                 if delta > 0 then
                     local wday, hour = key:match('^(%d+)_(%d+)$')
-                    if wday and hour then
+                    -- v6.6.5 Paket 2: FK parent guard -- trap house silinmisse
+                    -- (Matrix.TrapHouses[trapHouseId] yok) INSERT denenmez.
+                    if wday and hour and Matrix.TrapHouses and Matrix.TrapHouses[trapHouseId] then
                         queries[#queries + 1] = {
                             query = [[
                                 INSERT INTO matrix_pattern_log (trap_house_id, day_of_week, hour_of_day, occurrence_count)
@@ -1146,11 +1148,30 @@ CreateThread(function()
     Matrix.Bureau.LoadLearningCore()
 end)
 
+-- v6.6.5 Paket 2: trap house silindiginde (chaos/diagnostics fixture
+-- teardown gibi yollarla) bu trap house'a bagli TUM RAM dirty-set
+-- girdilerini temizler -- FlushDirty* tick'lerinin artik var olmayan
+-- bir parent icin INSERT/UPDATE denemesini (FK constraint violation)
+-- onler.
+function Matrix.Bureau.ClearLearningState(trapHouseId)
+    trapHouseId = tonumber(trapHouseId)
+    if not trapHouseId then return false end
+    learningCore[trapHouseId]      = nil
+    dirtyLearningCore[trapHouseId] = nil
+    dirtyIntel[trapHouseId]        = nil
+    cyberLeakHeatmap[trapHouseId]  = nil
+    patternLog[trapHouseId]        = nil
+    dirtyPatternLog[trapHouseId]   = nil
+    dirtyDecryption[trapHouseId]   = nil
+    patternLogFlushed[trapHouseId] = nil
+    return true
+end
+
 function Matrix.Bureau.FlushDirtyLearningCore()
     local queries = {}
     for trapHouseId in pairs(dirtyLearningCore) do
         local state = learningCore[trapHouseId]
-        if state then
+        if state and Matrix.TrapHouses and Matrix.TrapHouses[trapHouseId] then
             queries[#queries + 1] = {
                 query = [[
                     INSERT INTO matrix_bureau_learning_core
@@ -2868,19 +2889,27 @@ function Matrix.Bureau.FlushDirtyIntel()
     local queries = {}
     for id in pairs(dirtyIntel) do
         local heat = cyberLeakHeatmap[id] or 0.0
-        queries[#queries + 1] = {
-            query  = [[
-                INSERT INTO matrix_bureau_intel (trap_house_id, category, intensity, updated_at)
-                VALUES (?, 'cyber_leak', ?, NOW())
-                ON DUPLICATE KEY UPDATE intensity = VALUES(intensity), updated_at = NOW()
-            ]],
-            values = { id, heat }
-        }
-        -- ★ HEAT PERSISTENCE FIX: trap_houses tablosuna da yaz (restart kalıcı)
-        queries[#queries + 1] = {
-            query  = 'UPDATE matrix_trap_houses SET cyber_leak_intensity = ? WHERE id = ?',
-            values = { heat, id }
-        }
+        -- v6.6.5 Paket 2: FK parent guard -- trap house silinmisse
+        -- (Matrix.TrapHouses[id] yok) INSERT denenmez.
+        if Matrix.TrapHouses and Matrix.TrapHouses[id] then
+            queries[#queries + 1] = {
+                query  = [[
+                    INSERT INTO matrix_bureau_intel (trap_house_id, category, intensity, updated_at)
+                    VALUES (?, 'cyber_leak', ?, NOW())
+                    ON DUPLICATE KEY UPDATE intensity = VALUES(intensity), updated_at = NOW()
+                ]],
+                values = { id, heat }
+            }
+        end
+        -- v6.6.5 Paket 2: FK parent guard -- ayni sebeple UPDATE de
+        -- ayni Matrix.TrapHouses[id] kontrolune bagli.
+        if Matrix.TrapHouses and Matrix.TrapHouses[id] then
+            -- ★ HEAT PERSISTENCE FIX: trap_houses tablosuna da yaz (restart kalıcı)
+            queries[#queries + 1] = {
+                query  = 'UPDATE matrix_trap_houses SET cyber_leak_intensity = ? WHERE id = ?',
+                values = { heat, id }
+            }
+        end
         dirtyIntel[id] = nil
     end
     if #queries == 0 then return end
