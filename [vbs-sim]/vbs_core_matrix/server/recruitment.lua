@@ -341,10 +341,42 @@ RegisterNetEvent('matrix:server:coercionCompleted', function(coercionId)
 
     local c = Matrix.Coercions[coercionId]
     if not c or c.source ~= src then return end
+
+    local cfg = CoercionCfg()
+
+    -- Sunucu-yetkili sure dogrulamasi: BeginCoercion'da kaydedilen
+    -- started_at'tan bu yana gecen GERCEK sure cfg.DurationMs'i
+    -- karsilamiyorsa client 60sn bekleme suresini atlamis demektir.
+    local elapsedMs = (os_time() - c.started_at) * 1000
+    if elapsedMs < cfg.DurationMs then
+        Matrix.Log('RECRUITMENT', '[YETKI RED] #%d src=%d erken tamamlama denemesi (gecen=%dms, gerekli=%dms).',
+            coercionId, src, elapsedMs, cfg.DurationMs)
+        AbortCoercion(coercionId, 'premature_completion', src)
+        return
+    end
+
+    -- Sunucu-yetkili yakinlik dogrulamasi: hedefe mesafe yeniden olculur;
+    -- client'in bildirdigi mesafeye guvenilmez.
+    local targetPed = c.target_net_id and NetworkGetEntityFromNetworkId(c.target_net_id)
+    local playerPed = GetPlayerPed(src)
+    if not targetPed or targetPed == 0 or not DoesEntityExist(targetPed)
+        or not playerPed or playerPed == 0 then
+        Matrix.Log('RECRUITMENT', '[YETKI RED] #%d src=%d hedef/oyuncu ped cozulemedi.', coercionId, src)
+        AbortCoercion(coercionId, 'proximity', src)
+        return
+    end
+
+    local dist = #(GetEntityCoords(playerPed) - GetEntityCoords(targetPed))
+    if dist > cfg.ProximityAbortDistance then
+        Matrix.Log('RECRUITMENT', '[YETKI RED] #%d src=%d yakinlik ihlali (mesafe=%.2fm, limit=%.2fm).',
+            coercionId, src, dist, cfg.ProximityAbortDistance)
+        AbortCoercion(coercionId, 'proximity', src)
+        return
+    end
+
     Matrix.Coercions[coercionId] = nil
 
     local data = c.target_data or {}
-    local cfg  = CoercionCfg()
 
     -- Yeni bir aday kaydı üret: coercion tamamlandı → psychology coercion-türevli
     local cid = nextCandidateId

@@ -889,11 +889,41 @@ RegisterNetEvent('matrix:server:reportLogisticsRun', function(trapHouseId)
     Matrix.Bureau.LogPatternEvent(trapHouseId)
 end)
 
+-- src'nin bu trap house'ta gercekten bir operasyonu (bot handler'i) oldugunu
+-- dogrular -- "dispatcher" burada trapHouseId'ye baglanmis botlarin
+-- handler_citizenid'idir. Bu kontrol olmadan herhangi bir oyuncu kendi
+-- baskinini sahte 'escaped' yapabilir veya rakip trap house'u sahte
+-- 'captured' ile muhurleyebilir.
+local function _IsRaidDispatcher(src, trapHouseId)
+    local state = Matrix.GetOrCreatePlayerState(src)
+    if not state or not state.citizenid then return false end
+    for _, bot in pairs(Matrix.Bots or {}) do
+        if bot.state and bot.state.trap_house_id == trapHouseId
+            and bot.handler_citizenid == state.citizenid then
+            return true
+        end
+    end
+    return false
+end
+
 RegisterNetEvent('matrix:server:reportRaidOutcome', function(trapHouseId, outcome)
     local src = source
-    if type(src) ~= 'number' or src <= 0 then return end
+    if type(src) ~= 'number' or src <= 0 then
+        Matrix.Log('BUREAU', '[YETKI RED] reportRaidOutcome gecersiz src: %s', tostring(src))
+        return
+    end
     trapHouseId = tonumber(trapHouseId)
     if not trapHouseId then return end
+    if not VALID_RAID_OUTCOMES[outcome] then
+        Matrix.Log('BUREAU', '[YETKI RED] src=%d trap #%d icin gecersiz raid outcome: %s',
+            src, trapHouseId, tostring(outcome))
+        return
+    end
+    if not _IsRaidDispatcher(src, trapHouseId) then
+        Matrix.Log('BUREAU', '[YETKI RED] src=%d trap #%d icin dispatcher degil -- raid sonucu bildirimi reddedildi.',
+            src, trapHouseId)
+        return
+    end
     Matrix.Bureau.ResolveRaidOutcome(trapHouseId, outcome)
 end)
 

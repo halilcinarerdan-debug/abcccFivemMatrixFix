@@ -224,6 +224,11 @@ end, false)
 -- aren't online). This preserves a SINGLE canonical parser.
 AddEventHandler('matrix:server:cellularComms:submitWorkOrder__invoke', function(src, orderText)
     if type(src) ~= 'number' or src <= 0 then return end
+    if not _HasCommandAuthority(src) then
+        _Reply(src, false, 'DARKCHAT: insufficient command authority.')
+        Matrix.Log('COMMS', '[YETKI RED] /darkchat: src=%d yetkisiz erisim denemesi.', src)
+        return
+    end
     -- Reuse the same handler body via the event system
     local kind, agentId, amountA, amountB, cellId = _Parse(orderText)
     if not kind then
@@ -250,6 +255,10 @@ end)
 -- [8] EXPORTS — programmatic entry point
 -- =====================================================================
 exports('SubmitCellularWorkOrder', function(src, orderText)
+    if not _HasCommandAuthority(src) then
+        Matrix.Log('COMMS', '[YETKI RED] SubmitCellularWorkOrder: src=%s yetkisiz erisim denemesi.', tostring(src))
+        return false, 'insufficient_authority'
+    end
     if type(orderText) ~= 'string' then return false, 'bad_order' end
     local kind, agentId, amountA, amountB, cellId = _Parse(orderText)
     if not kind then return false, 'unrecognized' end

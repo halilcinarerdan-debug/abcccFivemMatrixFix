@@ -744,6 +744,21 @@ RegisterCommand('proxy_audit', function(src)
 end, false)
 
 RegisterCommand('proxy_unseal', function(src, args)
+    -- Fail-closed yetki kapisi: bu komut FinCEN-muhurlu trap house'u
+    -- muhursuzlestirip vergi denetimini bypass eder -- yetkisiz oyuncu
+    -- cagiramaz.
+    if not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority) then
+        Matrix.Log('SESSION1', '[YETKI RED] proxy_unseal: Matrix.Hierarchy yok -- REDDEDILDI (src=%s).', tostring(src))
+        Reply(src, 'Yetkisiz.')
+        return
+    end
+    local s = Matrix.GetOrCreatePlayerState(src)
+    if not s or not s.citizenid or not Matrix.Hierarchy.HasCommandAuthority(s.citizenid) then
+        Matrix.Log('SESSION1', '[YETKI RED] proxy_unseal: src=%s yetkisiz erisim denemesi.', tostring(src))
+        Reply(src, 'Yetkisiz.')
+        return
+    end
+
     local proxyId = tonumber(args[1])
     if not proxyId then Reply(src, 'Usage: /proxy_unseal [proxyId]'); return end
     local cell = LocalCache.TrapHouses[proxyId]

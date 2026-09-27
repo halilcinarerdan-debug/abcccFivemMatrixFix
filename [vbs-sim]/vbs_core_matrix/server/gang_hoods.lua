@@ -273,6 +273,20 @@ end
 
 
 RegisterCommand('kanityukle', function(src, args)
+    -- Fail-closed yetki kapisi: bu komut ExecuteVerdict (karakter wipe)
+    -- tetikler -- polis/yetkili olmayan hicbir oyuncu cagiramaz.
+    if not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority) then
+        Matrix.Log('GANGHOODS', '[YETKI RED] kanityukle: Matrix.Hierarchy yok -- REDDEDILDI (src=%s).', tostring(src))
+        Reply(src, 'Yetkisiz.')
+        return
+    end
+    local s = Matrix.GetOrCreatePlayerState(src)
+    if not s or not s.citizenid or not Matrix.Hierarchy.HasCommandAuthority(s.citizenid) then
+        Matrix.Log('GANGHOODS', '[YETKI RED] kanityukle: src=%s yetkisiz erisim denemesi.', tostring(src))
+        Reply(src, 'Yetkisiz.')
+        return
+    end
+
     local suspectSrc = tonumber(args[1])
     local slot        = tonumber(args[2])
     if not suspectSrc or not slot then

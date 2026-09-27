@@ -248,6 +248,12 @@ RegisterNetEvent('matrix:server:botany:waterRestore', function(trapHouseId)
     local src = source
     if type(src) ~= 'number' or src <= 0 then return end
     trapHouseId = tonumber(trapHouseId)
+    local actualTrapHouseId = Matrix.TrapHouseInterior and Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    if not actualTrapHouseId or actualTrapHouseId ~= trapHouseId then
+        Matrix.Log('BOTANY', '[YETKI RED] waterRestore: src=%d bildirdigi trap=%s icinde degil (gercek=%s).',
+            src, tostring(trapHouseId), tostring(actualTrapHouseId))
+        return
+    end
     local rec = GetOrCreate(trapHouseId)
     if not rec then return end
 
@@ -263,6 +269,12 @@ RegisterNetEvent('matrix:server:botany:pruneLeaves', function(trapHouseId)
     local src = source
     if type(src) ~= 'number' or src <= 0 then return end
     trapHouseId = tonumber(trapHouseId)
+    local actualTrapHouseId = Matrix.TrapHouseInterior and Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    if not actualTrapHouseId or actualTrapHouseId ~= trapHouseId then
+        Matrix.Log('BOTANY', '[YETKI RED] pruneLeaves: src=%d bildirdigi trap=%s icinde degil (gercek=%s).',
+            src, tostring(trapHouseId), tostring(actualTrapHouseId))
+        return
+    end
     local rec = GetOrCreate(trapHouseId)
     if not rec then return end
 
@@ -278,6 +290,12 @@ RegisterNetEvent('matrix:server:botany:setPH', function(trapHouseId, ph)
     local src = source
     if type(src) ~= 'number' or src <= 0 then return end
     trapHouseId = tonumber(trapHouseId)
+    local actualTrapHouseId = Matrix.TrapHouseInterior and Matrix.TrapHouseInterior.GetPlayerTrapHouse(src)
+    if not actualTrapHouseId or actualTrapHouseId ~= trapHouseId then
+        Matrix.Log('BOTANY', '[YETKI RED] setPH: src=%d bildirdigi trap=%s icinde degil (gercek=%s).',
+            src, tostring(trapHouseId), tostring(actualTrapHouseId))
+        return
+    end
     ph = tonumber(ph)
     if not ph then return end
     local cfg = Config.BotanyCore

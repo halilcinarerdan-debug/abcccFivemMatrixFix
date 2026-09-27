@@ -590,7 +590,23 @@ local function _Reply(src, msg)
     end
 end
 
+-- Fail-closed yetki kapisi: player_telemetry.lua / debug_map.lua'daki
+-- Matrix.Hierarchy.HasCommandAuthority deseniyle ayni. Herkes bir botun
+-- biyokimyasal durumunu okuyup/degistiremesin.
+local function _HasCommandAuthority(src)
+    if type(src) ~= 'number' or src <= 0 then return false end
+    if not (Matrix.Hierarchy and Matrix.Hierarchy.HasCommandAuthority) then return false end
+    local st = Matrix.GetOrCreatePlayerState(src)
+    if not st or not st.citizenid then return false end
+    return Matrix.Hierarchy.HasCommandAuthority(st.citizenid)
+end
+
 RegisterCommand('iqdurum', function(src, args)
+    if not _HasCommandAuthority(src) then
+        Matrix.Log('COGNITION', '[YETKI RED] /iqdurum: src=%s yetkisiz erisim denemesi.', tostring(src))
+        _Reply(src, 'Yetkisiz.')
+        return
+    end
     local botId = tonumber(args[1])
     local bot = botId and Matrix.Bots[botId]
     if not bot then _Reply(src, 'Kullanim: /iqdurum [botId]'); return end
@@ -604,6 +620,11 @@ RegisterCommand('iqdurum', function(src, args)
 end, false)
 
 RegisterCommand('kimyasal', function(src, args)
+    if not _HasCommandAuthority(src) then
+        Matrix.Log('COGNITION', '[YETKI RED] /kimyasal: src=%s yetkisiz erisim denemesi.', tostring(src))
+        _Reply(src, 'Yetkisiz.')
+        return
+    end
     local botId   = tonumber(args[1])
     local drug    = args[2]
     if not botId or not drug then
@@ -618,6 +639,11 @@ RegisterCommand('kimyasal', function(src, args)
 end, false)
 
 RegisterCommand('iqsifirla', function(src, args)
+    if not _HasCommandAuthority(src) then
+        Matrix.Log('COGNITION', '[YETKI RED] /iqsifirla: src=%s yetkisiz erisim denemesi.', tostring(src))
+        _Reply(src, 'Yetkisiz.')
+        return
+    end
     local botId = tonumber(args[1])
     if not botId or not Matrix.Bots[botId] then
         _Reply(src, 'Kullanim: /iqsifirla [botId]'); return
