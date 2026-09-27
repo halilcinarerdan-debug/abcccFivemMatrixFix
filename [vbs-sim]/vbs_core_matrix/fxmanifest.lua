@@ -97,6 +97,10 @@ server_scripts {
     -- ── ★ CHAOS ENGINE (YAMYAM MODU) ──
     'server/matrix_chaos.lua',
     'server/matrix_chaos_cannibal.lua',
+    -- ★ C5: 'server/matrix_chaos_hardcore_auth.lua' satırı henüz YOK
+    -- (world/transition/bridge/auth C6/Paket F'te toplu eklenecek) --
+    -- bu yuzden ui.lua son mevcut chaos satirinin hemen altina eklendi.
+    'server/matrix_chaos_hardcore_ui.lua',
 
     'server/lspd_units.lua',
     'server/crime_witness.lua',

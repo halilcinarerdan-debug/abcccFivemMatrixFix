@@ -515,6 +515,45 @@ AddCheck('[KOR NOKTA 1.3] Fixture Teardown Audit (_DestroyDiagFixtureTrapHouse)'
     return true, ('%d teardown API referansi dogrulandi, hepsi tanimli fonksiyon'):format(#order)
 end)
 
+AddCheck('[KOR NOKTA 1.4] Blip/UI Persistence Audit', function()
+    -- TEK check, 4 alt-doğrulama içinde
+    local failures = {}
+
+    -- 1) client/trap_house_client.lua: blip kalicilik fix
+    local thc = LoadResourceFile(GetCurrentResourceName(), 'client/trap_house_client.lua')
+    if type(thc) ~= 'string' then
+        failures[#failures+1] = 'trap_house_client.lua okunamadi'
+    else
+        if not thc:find('SetBlipAsShortRange(blip, false)', 1, true) then
+            failures[#failures+1] = 'SetBlipAsShortRange(blip, false) yok (Fix 2 regresyonu)'
+        end
+        if not thc:find('SetBlipDisplay(blip, 4)', 1, true) then
+            failures[#failures+1] = 'SetBlipDisplay(blip, 4) yok'
+        end
+        if not thc:find('RemoveBlip', 1, true) then
+            failures[#failures+1] = 'RemoveBlip cagrisi yok (orphan temizligi)'
+        end
+    end
+
+    -- 2) server/trap_house_interior.lua: ownership filter
+    local thi = LoadResourceFile(GetCurrentResourceName(), 'server/trap_house_interior.lua')
+    if type(thi) ~= 'string' then
+        failures[#failures+1] = 'trap_house_interior.lua okunamadi'
+    else
+        if not thi:find('visibleIds', 1, true) then
+            failures[#failures+1] = 'getTrapHouseLocations ownership filter (visibleIds) yok'
+        end
+        if not thi:find('not PlayerInteriorState[src]', 1, true) then
+            failures[#failures+1] = 'crash recovery guard (not PlayerInteriorState[src]) yok'
+        end
+    end
+
+    if #failures > 0 then
+        return false, table.concat(failures, ' | ')
+    end
+    return true, '4 sub-check PASS: blip kalicilik + orphan + ownership + crash recovery'
+end)
+
 
 -- =====================================================================
 -- ★ [FAZ 0.2] İZOMORFİK LOG PIPELINE DOĞRULAMASI
