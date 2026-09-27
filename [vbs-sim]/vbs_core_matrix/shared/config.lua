@@ -1850,4 +1850,24 @@ Config.Chaos = {
     -- ★ CANNIBAL KATMANI — Yıkım testi (8 saldırı vektörü)
     AllowCannibal      = false,      -- ★ PRODUCTION'DA MUTLAKA false
 }
+
+-- ★ HARDCORE CHAOS KATMANI — 5 modül (world/transition/bridge/auth/ui) +
+-- KOR NOKTA 1.4. İDEMPOTENT atama: alan zaten varsa (nil/false değilse veya
+-- 0 dahil herhangi bir değer taşıyorsa) DOKUNMAZ, yoksa varsayılanı atar.
+Config.Chaos.HardcoreEnabled              = Config.Chaos.HardcoreEnabled or false  -- ★ PRODUCTION'DA MUTLAKA false
+Config.Chaos.WorldStateZDriftThresholdM   = Config.Chaos.WorldStateZDriftThresholdM or 2.0
+Config.Chaos.WorldStateXYDriftThresholdM  = Config.Chaos.WorldStateXYDriftThresholdM or 50.0
+Config.Chaos.WorldStateAuditIntervalMs    = Config.Chaos.WorldStateAuditIntervalMs or 5000
+Config.Chaos.TransitionStormMaxIterations = Config.Chaos.TransitionStormMaxIterations or 100
+Config.Chaos.TransitionStormTimeoutMs     = Config.Chaos.TransitionStormTimeoutMs or 30000
+Config.Chaos.TransitionStormFixtureTraps  = Config.Chaos.TransitionStormFixtureTraps or 3
+Config.Chaos.ClientBridgeFuzzIterations   = Config.Chaos.ClientBridgeFuzzIterations or 12
+Config.Chaos.ClientBridgeFuzzTimeoutMs    = Config.Chaos.ClientBridgeFuzzTimeoutMs or 15000
+Config.Chaos.ClientBridgeFuzzEventCount   = Config.Chaos.ClientBridgeFuzzEventCount or 7
+Config.Chaos.AuthorityBypassTestTimeoutMs = Config.Chaos.AuthorityBypassTestTimeoutMs or 10000
+Config.Chaos.UIPersistenceScanIntervalMs  = Config.Chaos.UIPersistenceScanIntervalMs or 1000
+Config.Chaos.UIPersistenceMaxOrphanCount  = Config.Chaos.UIPersistenceMaxOrphanCount or 0
+Config.Chaos.UIPersistenceFlickerThreshold = Config.Chaos.UIPersistenceFlickerThreshold or 3
+Config.Chaos.UIPersistenceFlickerWindowMs  = Config.Chaos.UIPersistenceFlickerWindowMs or 5000
+
 return Config
